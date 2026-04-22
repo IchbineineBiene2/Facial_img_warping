@@ -1,53 +1,135 @@
-# Facial Image Warping Workspace
+# Facial Image Warping
 
-Bu depo artik iki ana bolume ayrildi:
+Yuz tespiti, nokta haritasi, geometrik deforme ve yaslandirma/genclestime efektleri iceren mobil + web uygulamasi.
 
-- `frontend/`: Expo + React Native istemci uygulamasi
-- `backend/`: Express + SQLite API servisi
+## Mimari
+
+```
+frontend/          Expo + React Native (web & mobil)
+backend/           Express proxy (Node.js, port 3000)
+python_service/    FastAPI bilgisayarli goru servisi (port 8000)
+```
+
+Frontend, dosya yukleme ve kimlik dogrulama icin Express backend uzerinden iletisim kurar. Express, CV isteklerini Python servisine yonlendirir.
+
+## Ozellikler
+
+### Yuz Tespiti ve On Isleme
+- MediaPipe Face Detector ile yuz bulma ve kisilma
+- Tespit edilen yuz 256x256 piksel olarak normalize edilir
+
+### Yuz Noktalari (Landmark)
+- MediaPipe Face Landmarker ile 478 nokta tespiti
+- Gozler, kaslar, agiz, burun, cene ve alin bolgeleri
+- Nokta gorunumu acip kapatilabilir
+
+### Geometrik Deforme (Warping)
+Scipy Delaunay ucgenleme + sinir cubukları (boundary anchors) kullanilarak kesintisiz deforme:
+
+| Operasyon | Aciklama |
+|---|---|
+| Gulumse | Agiz koseleri disari ve yukari kayar, yanaklar hafifce siser |
+| Kaslari Kaldir | Kas noktalarini yukari ceker, ust goz kapagi da hafifce yukselir |
+| Dudaklari Genislet | Agiz koseleri yanlara acilir, ic dudak noktaları da olceklenir |
+| Ince Yuz | Cene ve yanak noktalari burun ucuna dogru iceridoğru cekilir |
+
+### Yas Efektleri (FFT Tabanli)
+
+**Yaslandirma:**
+- Gaussiyan gurultu ile kirisi dokusu
+- FFT yuksek frekansi amplifikasyonu (deri purtuksuzlugu artar)
+- Deri tonu kararma ve sararmasi
+- Unsharp masking ile doku keskinlestirme
+- Yogunluga gore %35–85 harmanlama
+
+**Genclestime:**
+- Cok gecisli bilateral filtre ile deri yumusatma
+- FFT alcak geciren filtre (yuksek frekans bastirma)
+- Canny kenar koruma (yuz yapisi keskin kalir)
+- Parlaklik artisi ve serin ton kayma
+- Yogunluga gore %40–85 harmanlama
+
+### Arayuz
+- Oncesi / Sonrasi yan yana karsilastirma
+- Gorsele tiklaninca tam ekran lightbox
+- Kirpma editoru (serbest boyut, surukle-birak)
+- Yogunluk kaydirici (varsayilan 0.8)
 
 ## Klasor Yapisi
 
-- `frontend/app/`: ekranlar ve route dosyalari
-- `frontend/components/`: paylasilan UI bilesenleri
-- `frontend/services/`: backend API istemcisi
-- `backend/server.js`: API endpoint giris dosyasi
-- `backend/db.js`: SQLite erisim ve tablo islemleri
+```
+frontend/
+  app/
+    create.tsx        Ana CV ekrani (tespit, nokta, deforme, yas)
+    index.tsx         Hosgeldin ekrani
+    register.tsx      Kayit ekrani
+    login.tsx         Giris ekrani
+  components/         Paylasilan UI bilesenleri
+  constants/          Renk paleti ve tema
+
+backend/
+  server.js           Express API + SQLite kimlik dogrulama + Python proxy
+  db.js               SQLite erisim
+
+python_service/
+  main.py             FastAPI endpoint tanimlari
+  modules/
+    preprocessing.py  Yuz tespiti ve normalize
+    landmark.py       478 nokta tespiti ve cizimi
+    warping.py        Delaunay deforme motoru
+    aging.py          Yaslandirma / genclestime efektleri
+  utils/
+    image_utils.py    Bayt-NumPy-Base64 donusumleri
+    model_utils.py    MediaPipe model yolu yonetimi
+  models/             MediaPipe .task model dosyalari
+```
 
 ## Kurulum
 
-1. Frontend bagimliliklari:
+### 1. Frontend & Backend (Node.js)
 
 ```bash
 npm --prefix frontend install
-```
-
-2. Backend bagimliliklari:
-
-```bash
 npm --prefix backend install
 ```
 
+### 2. Python Servisi
+
+```bash
+cd python_service
+pip install -r requirements.txt
+```
+
+Gereklilikler: `fastapi`, `uvicorn`, `opencv-python-headless`, `mediapipe`, `numpy`, `scipy`, `Pillow`
+
 ## Calistirma
 
-- Frontend (Expo):
+Her uc servisi ayri terminalde baslatın:
 
 ```bash
-npm run frontend
+# Python CV servisi (port 8000)
+cd python_service
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Node.js backend (port 3000)
+cd backend
+node server.js
+
+# Expo frontend (web, port 8082)
+cd frontend
+npx expo start --web --port 8082
 ```
 
-- Frontend web:
+## API Endpoint'leri
 
-```bash
-npm run web
-```
+Python servisi (port 8000), Express uzerinden `/api/*` yoluyla erisiliyor:
 
-- Backend:
+| Yontem | Yol | Aciklama |
+|---|---|---|
+| POST | `/api/preprocess` | Yuz tespit + 256x256 normalize |
+| POST | `/api/landmarks` | 478 nokta tespiti |
+| POST | `/api/warp` | Geometrik deforme (`operation`, `intensity`) |
+| POST | `/api/frequency` | Yas efekti (`mode=aging/deaging`, `intensity`) |
+| GET  | `/api/health` | Servis saglik kontrolu |
 
-```bash
-npm run backend
-```
-
-## Not
-
-Backend varsayilan olarak `http://localhost:8000` adresinde calisir.
-Frontend API cagirilari bu adrese gore ayarlanmistir.
+Tum gorsel gonderimler `multipart/form-data` formatinda yapilir; cevaplar `result_image_b64` (PNG base64) icerir.

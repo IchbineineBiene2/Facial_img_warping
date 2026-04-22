@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -117,6 +117,9 @@ export default function RegisterScreen() {
             onChangeText={setPasswordRepeat}
             style={[styles.input, { borderColor: colorScheme === 'dark' ? '#41484C' : '#C6CED6', color: colors.text }]}
           />
+          {password.length > 0 && passwordRepeat.length > 0 && password !== passwordRepeat ? (
+            <Text style={{ color: 'red', fontSize: 12, marginTop: 4 }}>Passwords do not match</Text>
+          ) : null}
 
           <Pressable onPress={onSubmit} style={[styles.submitBtn, { backgroundColor: colors.tint }]}>
             <ThemedText style={styles.submitText}>Kaydol</ThemedText>

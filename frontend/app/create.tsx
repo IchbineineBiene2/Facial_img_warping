@@ -4,11 +4,15 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Modal,
     PanResponder,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
+    Switch,
+    Text,
     View,
     useWindowDimensions,
 } from 'react-native';
@@ -23,6 +27,51 @@ import { Ionicons } from '@expo/vector-icons';
 const MIN_WIDTH = 512;
 const MIN_HEIGHT = 512;
 const MIN_CROP_SIZE = 24;
+
+const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+
+function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function postBase64FormData(endpoint: string, b64: string, fields: Record<string, string> = {}): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(b64), 'image.png');
+  for (const [k, v] of Object.entries(fields)) formData.append(k, v);
+  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body: formData });
+  return response.json();
+}
+
+async function postImageFormData(endpoint: string, uri: string, fields: Record<string, string> = {}): Promise<any> {
+  const formData = new FormData();
+
+  if (Platform.OS === 'web') {
+    // blob: URLs from the web image picker have no filename/extension.
+    // Fetch the blob and use its MIME type to build a proper filename.
+    const blobRes = await fetch(uri);
+    const blob = await blobRes.blob();
+    const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+    formData.append('image', blob, `image.${ext}`);
+  } else {
+    const filename = uri.split('/').pop()?.split('?')[0] ?? 'image.jpg';
+    const ext = filename.split('.').pop()?.toLowerCase() ?? 'jpg';
+    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+    formData.append('image', { uri, name: filename, type: mimeType } as any);
+  }
+
+  for (const [k, v] of Object.entries(fields)) {
+    formData.append(k, v);
+  }
+
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    body: formData,
+  });
+  return response.json();
+}
 
 type ProcessState = 'idle' | 'selected' | 'error';
 
@@ -89,6 +138,8 @@ export default function CreateScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
+  // In dark mode tint is #fff — text on tint buttons must be dark to be visible
+  const tintTextColor = colorScheme === 'dark' ? '#11181C' : '#FFFFFF';
   const { width } = useWindowDimensions();
   const isWide = width >= 960;
   const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
@@ -103,6 +154,30 @@ export default function CreateScreen() {
   const cropBoxRef = useRef<CropBox | null>(null);
   const dragStartRef = useRef<CropBox | null>(null);
   const resizeStartRef = useRef<CropBox | null>(null);
+
+  // CV pipeline state
+  const [preprocessLoading, setPreprocessLoading] = useState(false);
+  const [preprocessError, setPreprocessError] = useState<string | null>(null);
+  const [preprocessedB64, setPreprocessedB64] = useState<string | null>(null);
+
+  const [landmarkLoading, setLandmarkLoading] = useState(false);
+  const [landmarkError, setLandmarkError] = useState<string | null>(null);
+  const [landmarkB64, setLandmarkB64] = useState<string | null>(null);
+  const [landmarkCount, setLandmarkCount] = useState<number | null>(null);
+  const [showLandmarks, setShowLandmarks] = useState(false);
+
+  const [warpOp, setWarpOp] = useState<'smile' | 'raise_eyebrows' | 'widen_lips' | 'slim_face'>('smile');
+  const [warpIntensity, setWarpIntensity] = useState(0.8);
+  const [warpLoading, setWarpLoading] = useState(false);
+  const [warpError, setWarpError] = useState<string | null>(null);
+  const [warpResultB64, setWarpResultB64] = useState<string | null>(null);
+
+  const [agingIntensity, setAgingIntensity] = useState(0.8);
+  const [agingLoading, setAgingLoading] = useState(false);
+  const [agingError, setAgingError] = useState<string | null>(null);
+  const [agingResultB64, setAgingResultB64] = useState<string | null>(null);
+  const [agingMode, setAgingMode] = useState<'aging' | 'deaging'>('aging');
+  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
 
   useEffect(() => {
     cropBoxRef.current = cropBox;
@@ -326,6 +401,82 @@ export default function CreateScreen() {
     }
   };
 
+  const handlePreprocess = async () => {
+    if (!selectedImageUri) return;
+    setPreprocessLoading(true);
+    setPreprocessError(null);
+    setPreprocessedB64(null);
+    setLandmarkB64(null);
+    setLandmarkCount(null);
+    setWarpResultB64(null);
+    setAgingResultB64(null);
+    try {
+      const data = await postImageFormData('/api/preprocess', selectedImageUri);
+      if (!data.success) throw new Error(data.message ?? 'Preprocess failed');
+      setPreprocessedB64(data.processed_image_b64);
+    } catch (e: any) {
+      setPreprocessError(e?.message ?? 'Unknown error');
+    } finally {
+      setPreprocessLoading(false);
+    }
+  };
+
+  const handleLandmarks = async () => {
+    if (!preprocessedB64) return;
+    const dataUri = `data:image/png;base64,${preprocessedB64}`;
+    setLandmarkLoading(true);
+    setLandmarkError(null);
+    try {
+      const data = await postImageFormData('/api/landmarks', selectedImageUri!);
+      if (!data.success) throw new Error(data.message ?? 'Landmark detection failed');
+      setLandmarkB64(data.landmark_image_b64);
+      setLandmarkCount(data.landmark_count);
+    } catch (e: any) {
+      setLandmarkError(e?.message ?? 'Unknown error');
+    } finally {
+      setLandmarkLoading(false);
+    }
+  };
+
+  const handleWarp = async () => {
+    if (!preprocessedB64 || !landmarkCount) return;
+    setWarpLoading(true);
+    setWarpError(null);
+    setWarpResultB64(null);
+    try {
+      const data = await postBase64FormData('/api/warp', preprocessedB64, {
+        operation: warpOp,
+        intensity: String(warpIntensity),
+      });
+      if (!data.success) throw new Error(data.message ?? 'Warp failed');
+      setWarpResultB64(data.result_image_b64);
+    } catch (e: any) {
+      setWarpError(e?.message ?? 'Unknown error');
+    } finally {
+      setWarpLoading(false);
+    }
+  };
+
+  const handleAging = async (mode: 'aging' | 'deaging') => {
+    if (!preprocessedB64) return;
+    setAgingMode(mode);
+    setAgingLoading(true);
+    setAgingError(null);
+    setAgingResultB64(null);
+    try {
+      const data = await postBase64FormData('/api/frequency', preprocessedB64, {
+        mode,
+        intensity: String(agingIntensity),
+      });
+      if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
+      setAgingResultB64(data.result_image_b64);
+    } catch (e: any) {
+      setAgingError(e?.message ?? 'Unknown error');
+    } finally {
+      setAgingLoading(false);
+    }
+  };
+
   return (
     <ThemedView style={styles.screen}>
       <SideNav />
@@ -356,8 +507,8 @@ export default function CreateScreen() {
             </ThemedText>
 
             <Pressable style={[styles.uploadButton, { backgroundColor: Colors[colorScheme].tint }]} onPress={pickImage}>
-              <Ionicons name="image-outline" size={18} color="#FFFFFF" />
-              <ThemedText style={styles.uploadButtonText}>Görsel Seç</ThemedText>
+              <Ionicons name="image-outline" size={18} color={tintTextColor} />
+              <ThemedText style={[styles.uploadButtonText, { color: tintTextColor }]}>Görsel Seç</ThemedText>
             </Pressable>
 
             <View style={styles.statusRow}>
@@ -432,13 +583,191 @@ export default function CreateScreen() {
               },
             ]}>
             <ThemedText type="subtitle">Özellikler</ThemedText>
-            <View style={styles.emptyFeatureSpace}>
-              <ThemedText style={styles.helperText}>Bu alan şimdilik boş.</ThemedText>
+
+            {/* Section 1: Preprocessing */}
+            <ThemedText type="defaultSemiBold">1. Yüz Tespiti</ThemedText>
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: selectedImageUri ? 1 : 0.5 }]}
+              onPress={handlePreprocess}
+              disabled={!selectedImageUri || preprocessLoading}>
+              {preprocessLoading
+                ? <ActivityIndicator color={tintTextColor} />
+                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Yüzü Tespit Et</ThemedText>}
+            </Pressable>
+            {preprocessError ? <Text style={styles.errorText}>{preprocessError}</Text> : null}
+            {preprocessedB64 ? (
+              <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
+                <Image
+                  source={{ uri: `data:image/png;base64,${preprocessedB64}` }}
+                  style={styles.resultImage}
+                  contentFit="contain"
+                />
+              </Pressable>
+            ) : null}
+
+            {/* Section 2: Landmarks */}
+            <ThemedText type="defaultSemiBold">2. Yüz Noktaları</ThemedText>
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.4 }]}
+              onPress={handleLandmarks}
+              disabled={!preprocessedB64 || landmarkLoading}>
+              {landmarkLoading
+                ? <ActivityIndicator color={tintTextColor} />
+                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Noktaları Tespit Et</ThemedText>}
+            </Pressable>
+            {landmarkError ? <Text style={styles.errorText}>{landmarkError}</Text> : null}
+            {landmarkCount != null ? (
+              <View style={styles.landmarkRow}>
+                <View style={{ flex: 1 }}>
+                  <ThemedText style={styles.helperText}>{landmarkCount} nokta bulundu</ThemedText>
+                  <ThemedText style={[styles.helperText, { fontSize: 11, opacity: 0.5 }]}>
+                    Gözler, kaşlar, ağız, burun, çene ve alın noktaları
+                  </ThemedText>
+                </View>
+                <Switch value={showLandmarks} onValueChange={setShowLandmarks} />
+              </View>
+            ) : null}
+            {landmarkB64 && showLandmarks ? (
+              <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${landmarkB64}`)}>
+                <Image
+                  source={{ uri: `data:image/png;base64,${landmarkB64}` }}
+                  style={styles.resultImage}
+                  contentFit="contain"
+                />
+              </Pressable>
+            ) : preprocessedB64 && landmarkCount != null && !showLandmarks ? (
+              <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
+                <Image
+                  source={{ uri: `data:image/png;base64,${preprocessedB64}` }}
+                  style={styles.resultImage}
+                  contentFit="contain"
+                />
+              </Pressable>
+            ) : null}
+
+            {/* Section 3: Expression Warp */}
+            <ThemedText type="defaultSemiBold">3. Yüz Deforme</ThemedText>
+            <View style={styles.warpGrid}>
+              {(['smile', 'raise_eyebrows', 'widen_lips', 'slim_face'] as const).map((op) => (
+                <Pressable
+                  key={op}
+                  style={[
+                    styles.warpOpButton,
+                    {
+                      backgroundColor: warpOp === op ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                      opacity: landmarkCount ? 1 : 0.4,
+                    },
+                  ]}
+                  onPress={() => setWarpOp(op)}
+                  disabled={!landmarkCount}>
+                  <ThemedText style={[styles.warpOpText, { color: warpOp === op ? tintTextColor : colors.text }]}>
+                    {op === 'smile' ? 'Gülümse' : op === 'raise_eyebrows' ? 'Kaşları Kaldır' : op === 'widen_lips' ? 'Dudakları Genişlet' : 'İnce Yüz'}
+                  </ThemedText>
+                </Pressable>
+              ))}
             </View>
+            <ThemedText style={styles.helperText}>Yoğunluk: {warpIntensity.toFixed(1)}</ThemedText>
+            <View style={styles.sliderRow}>
+              <Pressable onPress={() => setWarpIntensity(Math.max(0, +(warpIntensity - 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!landmarkCount}>
+                <ThemedText>−</ThemedText>
+              </Pressable>
+              <View style={styles.sliderTrack}>
+                <View style={[styles.sliderFill, { width: `${warpIntensity * 100}%`, backgroundColor: Colors[colorScheme].tint }]} />
+              </View>
+              <Pressable onPress={() => setWarpIntensity(Math.min(1, +(warpIntensity + 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!landmarkCount}>
+                <ThemedText>+</ThemedText>
+              </Pressable>
+            </View>
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: landmarkCount ? 1 : 0.4 }]}
+              onPress={handleWarp}
+              disabled={!landmarkCount || warpLoading}>
+              {warpLoading
+                ? <ActivityIndicator color={tintTextColor} />
+                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Deforme Uygula</ThemedText>}
+            </Pressable>
+            {warpError ? <Text style={styles.errorText}>{warpError}</Text> : null}
+            {warpResultB64 && preprocessedB64 ? (
+              <View style={styles.sideBySide}>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Orijinal</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Sonuç</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${warpResultB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${warpResultB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
+            {/* Section 4: Aging Simulation */}
+            <ThemedText type="defaultSemiBold">4. Yaşlandırma / Gençleştirme</ThemedText>
+            <ThemedText style={styles.helperText}>Yoğunluk: {agingIntensity.toFixed(1)}</ThemedText>
+            <View style={styles.sliderRow}>
+              <Pressable onPress={() => setAgingIntensity(Math.max(0, +(agingIntensity - 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!selectedImageUri}>
+                <ThemedText>−</ThemedText>
+              </Pressable>
+              <View style={styles.sliderTrack}>
+                <View style={[styles.sliderFill, { width: `${agingIntensity * 100}%`, backgroundColor: Colors[colorScheme].tint }]} />
+              </View>
+              <Pressable onPress={() => setAgingIntensity(Math.min(1, +(agingIntensity + 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!selectedImageUri}>
+                <ThemedText>+</ThemedText>
+              </Pressable>
+            </View>
+            <View style={styles.agingRow}>
+              <Pressable
+                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.4 }]}
+                onPress={() => handleAging('aging')}
+                disabled={!preprocessedB64 || agingLoading}>
+                {agingLoading && agingMode === 'aging'
+                  ? <ActivityIndicator color={tintTextColor} />
+                  : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Yaşlandır</ThemedText>}
+              </Pressable>
+              <Pressable
+                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: preprocessedB64 ? 1 : 0.4 }]}
+                onPress={() => handleAging('deaging')}
+                disabled={!preprocessedB64 || agingLoading}>
+                {agingLoading && agingMode === 'deaging'
+                  ? <ActivityIndicator color={colorScheme === 'dark' ? '#000' : '#fff'} />
+                  : <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>Gençleştir</ThemedText>}
+              </Pressable>
+            </View>
+            {agingError ? <Text style={styles.errorText}>{agingError}</Text> : null}
+            {agingResultB64 && preprocessedB64 ? (
+              <View style={styles.sideBySide}>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Orijinal</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${preprocessedB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Sonuç</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${agingResultB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${agingResultB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
           </View>
         </View>
       </ScrollView>
       </View>
+
+      <Modal visible={!!lightboxUri} animationType="fade" transparent onRequestClose={() => setLightboxUri(null)}>
+        <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxUri(null)}>
+          {lightboxUri ? (
+            <Image source={{ uri: lightboxUri }} style={styles.lightboxImage} contentFit="contain" />
+          ) : null}
+          <Pressable style={styles.lightboxClose} onPress={() => setLightboxUri(null)}>
+            <Ionicons name="close" size={24} color="#fff" />
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={cropEditorVisible} animationType="slide" transparent onRequestClose={closeCropEditor}>
         <View style={styles.cropModalBackdrop}>
@@ -806,5 +1135,117 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 6,
+  },
+  cvButton: {
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  cvButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  errorText: {
+    color: '#E53E3E',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  resultImage: {
+    width: '100%',
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: 'rgba(120,120,120,0.1)',
+  },
+  landmarkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  warpGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  warpOpButton: {
+    flex: 1,
+    minWidth: '40%',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  warpOpText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sliderBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(120,120,120,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sliderTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(120,120,120,0.2)',
+    overflow: 'hidden',
+  },
+  sliderFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  sideBySide: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  sideBox: {
+    flex: 1,
+    gap: 4,
+  },
+  sideLabel: {
+    fontSize: 11,
+    opacity: 0.7,
+    textAlign: 'center',
+  },
+  sideImage: {
+    width: '100%',
+    height: 120,
+    borderRadius: 10,
+    backgroundColor: 'rgba(120,120,120,0.1)',
+  },
+  agingRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  lightboxBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightboxImage: {
+    width: '100%',
+    height: '100%',
+  },
+  lightboxClose: {
+    position: 'absolute',
+    top: 48,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

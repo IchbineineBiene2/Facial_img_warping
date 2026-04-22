@@ -3,7 +3,8 @@ const cors = require('cors');
 const db = require('./db');
 
 const app = express();
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 3000;
+const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
 
 const allowedWarpModes = new Set(['smile', 'eyebrow', 'lip', 'slim']);
 const allowedModels = new Set(['MediaPipe', 'Dlib', 'DeepFace']);
@@ -35,58 +36,32 @@ const fail = (res, status, message, details) =>
     details,
   });
 
-const buildDefaultLandmarks = () => [
-  { id: 'face-left-forehead', left: '30%', top: '20%' },
-  { id: 'left-eye', left: '39%', top: '37%' },
-  { id: 'right-eye', left: '61%', top: '37%' },
-  { id: 'nose-bridge', left: '50%', top: '45%' },
-  { id: 'nose-tip', left: '50%', top: '52%' },
-  { id: 'mouth-left', left: '43%', top: '67%' },
-  { id: 'mouth-right', left: '57%', top: '67%' },
-  { id: 'jaw-left', left: '34%', top: '78%' },
-  { id: 'jaw-right', left: '66%', top: '78%' },
-];
+const cvUnavailable = (res) =>
+  res.status(503).json({
+    success: false,
+    message: 'CV service unavailable - is the Python service running?',
+  });
 
-const validateImagePayload = (body) => {
-  const { fileName, imageUri, width, height } = body || {};
-  if (!fileName || !imageUri) {
-    return { valid: false, message: 'fileName ve imageUri zorunludur.' };
+// Forward multipart FormData to the Python service and return its JSON response.
+async function proxyToPython(path, req, res) {
+  try {
+    const response = await fetch(`${PYTHON_SERVICE_URL}${path}`, {
+      method: 'POST',
+      headers: req.headers['content-type']
+        ? { 'content-type': req.headers['content-type'] }
+        : {},
+      body: req,
+      duplex: 'half',
+    });
+    const json = await response.json();
+    return res.status(response.status).json(json);
+  } catch (err) {
+    if (err.code === 'ECONNREFUSED' || err.cause?.code === 'ECONNREFUSED') {
+      return cvUnavailable(res);
+    }
+    return res.status(500).json({ success: false, message: err.message });
   }
-
-  const w = Number(width);
-  const h = Number(height);
-  if (!Number.isFinite(w) || !Number.isFinite(h)) {
-    return { valid: false, message: 'width ve height sayisal olmalidir.' };
-  }
-
-  if (w < 512 || h < 512) {
-    return {
-      valid: false,
-      message: 'Minimum cozunurluk 512x512 olmalidir.',
-      details: { width: w, height: h },
-    };
-  }
-
-  return {
-    valid: true,
-    payload: {
-      fileName,
-      imageUri,
-      width: clamp(w, 512, 4096),
-      height: clamp(h, 512, 4096),
-    },
-  };
-};
-
-const resolveUploadOrFail = (res, body) => {
-  const upload = db.resolveUpload(body || {});
-  if (!upload) {
-    fail(res, 400, 'Once bir gorsel yuklenmelidir.');
-    return null;
-  }
-
-  return upload;
-};
+}
 
 app.get('/api/health', (_req, res) => {
   const counts = {
@@ -104,6 +79,7 @@ app.get('/api/health', (_req, res) => {
     {
       service: 'facial-warping-backend',
       port: Number(PORT),
+      pythonService: PYTHON_SERVICE_URL,
       database: db.dbFile,
       modules: ['preprocess', 'landmarks', 'warp', 'frequency', 'evaluation', 'export'],
       counts,
@@ -112,214 +88,15 @@ app.get('/api/health', (_req, res) => {
   );
 });
 
-app.post('/api/preprocess', (req, res) => {
-  const check = validateImagePayload(req.body);
-  if (!check.valid) {
-    return fail(res, 400, check.message, check.details);
-  }
-
-  const { fileName, imageUri, width, height } = check.payload;
-  const {
-    alignFaces = true,
-    cropFaces = true,
-    normalizationLevel = 'medium',
-    noiseReductionLevel = 'low',
-  } = req.body || {};
-
-  const upload = db.createOrUpdateUpload({
-    id: req.body?.uploadId ? Number(req.body.uploadId) : undefined,
-    fileName,
-    imageUri,
-    width,
-    height,
-  });
-
-  const landmarks = buildDefaultLandmarks();
-  const normalized = normalizationLevel !== 'off';
-  const noiseReductionApplied = noiseReductionLevel !== 'off';
-  const preprocess = db.createPreprocessRun({
-    uploadId: upload.id,
-    faceDetected: true,
-    cropped: Boolean(cropFaces),
-    normalized,
-    grayscaleReady: normalized || noiseReductionApplied,
-    width,
-    height,
-  });
-  const landmarkSet = db.createLandmarkSet({
-    uploadId: upload.id,
-    source: 'generated',
-    landmarks,
-  });
-
-  return respond(
-    res,
-    {
-      upload: {
-        id: upload.id,
-        fileName: upload.file_name,
-        imageUri: upload.image_uri,
-        width: upload.width,
-        height: upload.height,
-      },
-      preprocess: {
-        id: preprocess.id,
-        faceDetected: Boolean(preprocess.face_detected),
-        cropped: Boolean(preprocess.cropped),
-        normalized: Boolean(preprocess.normalized),
-        grayscaleReady: Boolean(preprocess.grayscale_ready),
-        width: preprocess.width,
-        height: preprocess.height,
-      },
-      options: {
-        alignFaces: Boolean(alignFaces),
-        cropFaces: Boolean(cropFaces),
-        normalizationLevel,
-        noiseReductionLevel,
-        faceDetection: 'auto',
-      },
-      landmarks,
-      landmarkSetId: landmarkSet.id,
-      performance: {
-        targetSec: 3,
-        elapsedSec: 0,
-      },
-    },
-    { stage: 'preprocess' }
-  );
-});
-
-app.post('/api/landmarks', (req, res) => {
-  const upload = resolveUploadOrFail(res, req.body);
-  if (!upload) {
-    return;
-  }
-
-  const landmarks = buildDefaultLandmarks();
-  const landmarkSet = db.createLandmarkSet({
-    uploadId: upload.id,
-    source: req.body?.source === 'backend' ? 'backend' : 'generated',
-    landmarks,
-  });
-
-  return respond(
-    res,
-    {
-      uploadId: upload.id,
-      landmarkSetId: landmarkSet.id,
-      landmarks,
-      count: landmarks.length,
-      visualization: {
-        overlayEnabled: true,
-        canToggle: true,
-      },
-    },
-    { stage: 'landmarks' }
-  );
-});
-
-app.post('/api/warp', (req, res) => {
-  const upload = resolveUploadOrFail(res, req.body);
-  if (!upload) {
-    return;
-  }
-
-  const {
-    mode = 'smile',
-    expressionIntensity = 45,
-    agingLevel = 35,
-    smoothingLevel = 25,
-    aiModel = 'MediaPipe',
-    aiTransferEnabled = false,
-  } = req.body || {};
-
-  if (!allowedWarpModes.has(mode)) {
-    return fail(res, 400, 'Gecersiz warp mode.', {
-      allowed: Array.from(allowedWarpModes),
-      received: mode,
-    });
-  }
-
-  if (!allowedModels.has(aiModel)) {
-    return fail(res, 400, 'Gecersiz aiModel.', {
-      allowed: Array.from(allowedModels),
-      received: aiModel,
-    });
-  }
-
-  const warpRun = db.createWarpRun({
-    uploadId: upload.id,
-    mode,
-    aiModel,
-    aiTransferEnabled: Boolean(aiTransferEnabled),
-    expressionIntensity: clamp(Number(expressionIntensity) || 0, 0, 100),
-    agingLevel: clamp(Number(agingLevel) || 0, 0, 100),
-    smoothingLevel: clamp(Number(smoothingLevel) || 0, 0, 100),
-  });
-
-  return respond(
-    res,
-    {
-      uploadId: upload.id,
-      warpRunId: warpRun.id,
-      mode,
-      ai: {
-        model: aiModel,
-        transferEnabled: Boolean(aiTransferEnabled),
-      },
-      params: {
-        expressionIntensity: warpRun.expression_intensity,
-        agingLevel: warpRun.aging_level,
-        smoothingLevel: warpRun.smoothing_level,
-      },
-      transformedReady: true,
-      preview: {
-        sideBySide: true,
-        zoomEnabled: true,
-      },
-    },
-    { stage: 'warp' }
-  );
-});
-
-app.post('/api/frequency', (req, res) => {
-  const upload = resolveUploadOrFail(res, req.body);
-  if (!upload) {
-    return;
-  }
-
-  const agingLevel = clamp(Number(req.body?.agingLevel) || 0, 0, 100);
-  const smoothingLevel = clamp(Number(req.body?.smoothingLevel) || 0, 0, 100);
-  const highFrequencyEnergy = Number((0.35 + agingLevel / 400 - smoothingLevel / 700).toFixed(3));
-  const lowFrequencyEnergy = Number((1 - highFrequencyEnergy).toFixed(3));
-
-  const frequencyRun = db.createFrequencyRun({
-    uploadId: upload.id,
-    highFrequencyEnergy,
-    lowFrequencyEnergy,
-  });
-
-  return respond(
-    res,
-    {
-      uploadId: upload.id,
-      frequencyRunId: frequencyRun.id,
-      analysis: {
-        fourierReady: true,
-        magnitudeSpectrumReady: true,
-        highFrequencyEnergy,
-        lowFrequencyEnergy,
-      },
-    },
-    { stage: 'frequency' }
-  );
-});
+// Proxy multipart image endpoints directly to the Python CV service.
+app.post('/api/preprocess', (req, res) => proxyToPython('/preprocess', req, res));
+app.post('/api/landmarks', (req, res) => proxyToPython('/landmarks', req, res));
+app.post('/api/warp', (req, res) => proxyToPython('/warp', req, res));
+app.post('/api/frequency', (req, res) => proxyToPython('/frequency', req, res));
 
 app.post('/api/evaluation', (req, res) => {
   const upload = resolveUploadOrFail(res, req.body);
-  if (!upload) {
-    return;
-  }
+  if (!upload) return;
 
   const exp = clamp(Number(req.body?.expressionIntensity) || 0, 0, 100);
   const age = clamp(Number(req.body?.agingLevel) || 0, 0, 100);
@@ -328,12 +105,7 @@ app.post('/api/evaluation', (req, res) => {
   const psnr = Number((42 - mse / 18).toFixed(2));
   const ssim = Number(Math.max(0.55, 0.97 - mse / 450).toFixed(3));
 
-  const evaluationRun = db.createEvaluationRun({
-    uploadId: upload.id,
-    mse,
-    psnr,
-    ssim,
-  });
+  const evaluationRun = db.createEvaluationRun({ uploadId: upload.id, mse, psnr, ssim });
 
   return respond(
     res,
@@ -341,10 +113,7 @@ app.post('/api/evaluation', (req, res) => {
       uploadId: upload.id,
       evaluationRunId: evaluationRun.id,
       metrics: { mse, psnr, ssim },
-      thresholds: {
-        psnrGoodAbove: 30,
-        ssimGoodAbove: 0.8,
-      },
+      thresholds: { psnrGoodAbove: 30, ssimGoodAbove: 0.8 },
       quality: {
         psnr: psnr >= 30 ? 'good' : 'needs-improvement',
         ssim: ssim >= 0.8 ? 'good' : 'needs-improvement',
@@ -356,9 +125,7 @@ app.post('/api/evaluation', (req, res) => {
 
 app.post('/api/export', (req, res) => {
   const upload = resolveUploadOrFail(res, req.body);
-  if (!upload) {
-    return;
-  }
+  if (!upload) return;
 
   const { format = 'CSV', target = 'results' } = req.body || {};
   const fmt = String(format).toUpperCase();
@@ -387,8 +154,20 @@ app.post('/api/export', (req, res) => {
   );
 });
 
-app.use((err, _req, res, _next) => fail(res, 500, 'Beklenmeyen sunucu hatasi.', { message: err?.message || 'unknown' }));
+const resolveUploadOrFail = (res, body) => {
+  const upload = db.resolveUpload(body || {});
+  if (!upload) {
+    fail(res, 400, 'Once bir gorsel yuklenmelidir.');
+    return null;
+  }
+  return upload;
+};
+
+app.use((err, _req, res, _next) =>
+  fail(res, 500, 'Beklenmeyen sunucu hatasi.', { message: err?.message || 'unknown' })
+);
 
 app.listen(PORT, () => {
   console.log(`Facial backend listening on http://localhost:${PORT}`);
+  console.log(`Proxying CV requests to ${PYTHON_SERVICE_URL}`);
 });
