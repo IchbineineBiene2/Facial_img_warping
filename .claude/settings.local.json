@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pkill -f \"uvicorn main:app\")",
+      "Bash(pkill -f \"python.*uvicorn\")",
+      "Bash(python -m uvicorn main:app --reload --port 8000)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(python -m uvicorn main:app --host 0.0.0.0 --port 8000)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}
