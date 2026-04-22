@@ -1,50 +1,53 @@
-# Welcome to your Expo app 👋
+# Facial Image Warping Workspace
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Bu depo artik iki ana bolume ayrildi:
 
-## Get started
+- `frontend/`: Expo + React Native istemci uygulamasi
+- `backend/`: Express + SQLite API servisi
 
-1. Install dependencies
+## Klasor Yapisi
 
-   ```bash
-   npm install
-   ```
+- `frontend/app/`: ekranlar ve route dosyalari
+- `frontend/components/`: paylasilan UI bilesenleri
+- `frontend/services/`: backend API istemcisi
+- `backend/server.js`: API endpoint giris dosyasi
+- `backend/db.js`: SQLite erisim ve tablo islemleri
 
-2. Start the app
+## Kurulum
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+1. Frontend bagimliliklari:
 
 ```bash
-npm run reset-project
+npm --prefix frontend install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Backend bagimliliklari:
 
-## Learn more
+```bash
+npm --prefix backend install
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+## Calistirma
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- Frontend (Expo):
 
-## Join the community
+```bash
+npm run frontend
+```
 
-Join our community of developers creating universal apps.
+- Frontend web:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npm run web
+```
+
+- Backend:
+
+```bash
+npm run backend
+```
+
+## Not
+
+Backend varsayilan olarak `http://localhost:8000` adresinde calisir.
+Frontend API cagirilari bu adrese gore ayarlanmistir.
