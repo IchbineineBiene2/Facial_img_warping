@@ -1,205 +1,126 @@
-const DEFAULT_BASE_URL = 'http://localhost:8000';
+import { Platform } from 'react-native';
 
-const getBaseUrl = () => {
-  const configured = process.env.EXPO_PUBLIC_API_URL?.trim();
-  return configured && configured.length > 0 ? configured : DEFAULT_BASE_URL;
-};
+const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
-const buildUrl = (path: string) => `${getBaseUrl()}${path}`;
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const BASE64_INVALID = 255;
+const BASE64_LOOKUP = (() => {
+  const lookup = new Uint8Array(256);
+  lookup.fill(BASE64_INVALID);
+  for (let i = 0; i < BASE64_ALPHABET.length; i++) {
+    lookup[BASE64_ALPHABET.charCodeAt(i)] = i;
+  }
+  return lookup;
+})();
 
-async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(buildUrl(path), {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = data?.error || `HTTP ${response.status}`;
-    throw new Error(message);
+function decodeBase64ToBytes(input: string): Uint8Array {
+  const normalized = input.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
+  if (normalized.length === 0) {
+    return new Uint8Array(0);
+  }
+  if (normalized.length % 4 !== 0) {
+    throw new Error('Invalid base64 string length.');
   }
 
-  return data as T;
+  if (typeof globalThis.atob === 'function') {
+    const binary = globalThis.atob(normalized);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0;
+  const outputLength = (normalized.length / 4) * 3 - padding;
+  const bytes = new Uint8Array(outputLength);
+
+  let out = 0;
+  for (let i = 0; i < normalized.length; i += 4) {
+    const c1 = normalized.charCodeAt(i);
+    const c2 = normalized.charCodeAt(i + 1);
+    const c3 = normalized.charCodeAt(i + 2);
+    const c4 = normalized.charCodeAt(i + 3);
+
+    const v1 = BASE64_LOOKUP[c1];
+    const v2 = BASE64_LOOKUP[c2];
+    const v3 = c3 === 61 ? 0 : BASE64_LOOKUP[c3];
+    const v4 = c4 === 61 ? 0 : BASE64_LOOKUP[c4];
+
+    if (
+      v1 === BASE64_INVALID ||
+      v2 === BASE64_INVALID ||
+      (c3 !== 61 && v3 === BASE64_INVALID) ||
+      (c4 !== 61 && v4 === BASE64_INVALID)
+    ) {
+      throw new Error('Invalid base64 character encountered.');
+    }
+
+    const triple = (v1 << 18) | (v2 << 12) | (v3 << 6) | v4;
+
+    if (out < outputLength) bytes[out++] = (triple >> 16) & 0xff;
+    if (out < outputLength) bytes[out++] = (triple >> 8) & 0xff;
+    if (out < outputLength) bytes[out++] = triple & 0xff;
+  }
+
+  return bytes;
 }
 
-export type BackendLandmark = {
-  id: string;
-  left: `${number}%`;
-  top: `${number}%`;
-};
-
-export type PreprocessResponse = {
-  ok: true;
-  source: string;
-  options: {
-    alignFaces: boolean;
-    cropFaces: boolean;
-    normalizationLevel: 'off' | 'low' | 'medium' | 'high';
-    noiseReductionLevel: 'off' | 'low' | 'medium' | 'high';
-  };
-  upload: {
-    id: number;
-    fileName: string;
-    imageUri: string;
-    width: number;
-    height: number;
-  };
-  preprocess: {
-    id: number;
-    faceDetected: boolean;
-    cropped: boolean;
-    normalized: boolean;
-    grayscaleReady: boolean;
-    width: number;
-    height: number;
-  };
-  landmarks: BackendLandmark[];
-  landmarkSetId: number;
-  performance: {
-    targetSec: number;
-    elapsedSec: number;
-  };
-};
-
-export type WarpResponse = {
-  ok: true;
-  source: string;
-  uploadId: number;
-  warpRunId: number;
-  mode: 'smile' | 'eyebrow' | 'lip' | 'slim';
-  ai: {
-    model: 'MediaPipe' | 'Dlib' | 'DeepFace';
-    transferEnabled: boolean;
-  };
-  params: {
-    expressionIntensity: number;
-    agingLevel: number;
-    smoothingLevel: number;
-  };
-  transformedReady: boolean;
-  preview: {
-    sideBySide: boolean;
-    zoomEnabled: boolean;
-  };
-};
-
-export type FrequencyResponse = {
-  ok: true;
-  source: string;
-  uploadId: number;
-  frequencyRunId: number;
-  analysis: {
-    fourierReady: boolean;
-    magnitudeSpectrumReady: boolean;
-    highFrequencyEnergy: number;
-    lowFrequencyEnergy: number;
-  };
-};
-
-export type EvaluationResponse = {
-  ok: true;
-  source: string;
-  uploadId: number;
-  evaluationRunId: number;
-  metrics: {
-    mse: number;
-    psnr: number;
-    ssim: number;
-  };
-  thresholds: {
-    psnrGoodAbove: number;
-    ssimGoodAbove: number;
-  };
-  quality: {
-    psnr: 'good' | 'needs-improvement';
-    ssim: 'good' | 'needs-improvement';
-  };
-};
-
-export type ExportResponse = {
-  ok: true;
-  source: string;
-  uploadId: number;
-  exportRunId: number;
-  format: 'CSV' | 'PDF';
-  target: string;
-  fileName: string;
-  message: string;
-};
-
-export type HealthResponse = {
-  ok: true;
-  source: string;
-  service: string;
-  port: number;
-  database: string;
-  modules: string[];
-  counts: Record<string, number>;
-};
-
-export async function getHealth() {
-  return requestJson<HealthResponse>('/api/health', { method: 'GET' });
+function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
+  const bytes = decodeBase64ToBytes(b64);
+  return new Blob([bytes], { type: mimeType });
 }
 
-export async function preprocessImage(payload: {
-  fileName: string;
-  imageUri: string;
-  width: number;
-  height: number;
-  uploadId?: number;
-  alignFaces: boolean;
-  cropFaces: boolean;
-  normalizationLevel: 'off' | 'low' | 'medium' | 'high';
-  noiseReductionLevel: 'off' | 'low' | 'medium' | 'high';
-}) {
-  return requestJson<PreprocessResponse>('/api/preprocess', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+async function requestJson(endpoint: string, body: FormData): Promise<any> {
+  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+  return response.json();
 }
 
-export async function fetchLandmarks(payload: { uploadId?: number; imageUri?: string; fileName?: string }) {
-  return requestJson<{ ok: true; source: string; uploadId: number; landmarkSetId: number; landmarks: BackendLandmark[] }>('/api/landmarks', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+async function toImageFilePart(uri: string): Promise<Blob | { uri: string; name: string; type: string }> {
+  if (Platform.OS === 'web') {
+    const blobRes = await fetch(uri);
+    return blobRes.blob();
+  }
+
+  const filename = uri.split('/').pop()?.split('?')[0] ?? 'image.jpg';
+  const ext = filename.split('.').pop()?.toLowerCase() ?? 'jpg';
+  const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+  return { uri, name: filename, type: mimeType };
 }
 
-export async function runWarp(payload: {
-  uploadId?: number;
-  mode: 'smile' | 'eyebrow' | 'lip' | 'slim';
-  expressionIntensity: number;
-  agingLevel: number;
-  smoothingLevel: number;
-  aiModel: 'MediaPipe' | 'Dlib' | 'DeepFace';
-  aiTransferEnabled: boolean;
-}) {
-  return requestJson<WarpResponse>('/api/warp', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function preprocessFromUri(uri: string): Promise<any> {
+  const formData = new FormData();
+  const imagePart = await toImageFilePart(uri);
+
+  if (Platform.OS === 'web') {
+    const blob = imagePart as Blob;
+    const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+    formData.append('image', blob, `image.${ext}`);
+  } else {
+    formData.append('image', imagePart as any);
+  }
+
+  return requestJson('/api/preprocess', formData);
 }
 
-export async function analyzeFrequency(payload: { uploadId?: number; agingLevel: number; smoothingLevel: number }) {
-  return requestJson<FrequencyResponse>('/api/frequency', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function landmarksFromBase64(imageBase64: string): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  return requestJson('/api/landmarks', formData);
 }
 
-export async function evaluateImage(payload: { uploadId?: number; expressionIntensity: number; agingLevel: number }) {
-  return requestJson<EvaluationResponse>('/api/evaluation', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function warpFromBase64(imageBase64: string, operation: string, intensity: number): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('operation', operation);
+  formData.append('intensity', String(intensity));
+  return requestJson('/api/warp', formData);
 }
 
-export async function exportResults(payload: { uploadId?: number; format: 'CSV' | 'PDF'; target: string }) {
-  return requestJson<ExportResponse>('/api/export', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function frequencyFromBase64(imageBase64: string, mode: 'aging' | 'deaging', intensity: number): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('mode', mode);
+  formData.append('intensity', String(intensity));
+  return requestJson('/api/frequency', formData);
 }

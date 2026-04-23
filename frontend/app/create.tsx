@@ -7,7 +7,6 @@ import {
     ActivityIndicator,
     Modal,
     PanResponder,
-    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -22,56 +21,12 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { frequencyFromBase64, landmarksFromBase64, preprocessFromUri, warpFromBase64 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
 
 const MIN_WIDTH = 512;
 const MIN_HEIGHT = 512;
 const MIN_CROP_SIZE = 24;
-
-const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
-
-function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
-}
-
-async function postBase64FormData(endpoint: string, b64: string, fields: Record<string, string> = {}): Promise<any> {
-  const formData = new FormData();
-  formData.append('image', base64ToBlob(b64), 'image.png');
-  for (const [k, v] of Object.entries(fields)) formData.append(k, v);
-  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body: formData });
-  return response.json();
-}
-
-async function postImageFormData(endpoint: string, uri: string, fields: Record<string, string> = {}): Promise<any> {
-  const formData = new FormData();
-
-  if (Platform.OS === 'web') {
-    // blob: URLs from the web image picker have no filename/extension.
-    // Fetch the blob and use its MIME type to build a proper filename.
-    const blobRes = await fetch(uri);
-    const blob = await blobRes.blob();
-    const ext = blob.type === 'image/png' ? 'png' : 'jpg';
-    formData.append('image', blob, `image.${ext}`);
-  } else {
-    const filename = uri.split('/').pop()?.split('?')[0] ?? 'image.jpg';
-    const ext = filename.split('.').pop()?.toLowerCase() ?? 'jpg';
-    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
-    formData.append('image', { uri, name: filename, type: mimeType } as any);
-  }
-
-  for (const [k, v] of Object.entries(fields)) {
-    formData.append(k, v);
-  }
-
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    method: 'POST',
-    body: formData,
-  });
-  return response.json();
-}
 
 type ProcessState = 'idle' | 'selected' | 'error';
 
@@ -411,7 +366,7 @@ export default function CreateScreen() {
     setWarpResultB64(null);
     setAgingResultB64(null);
     try {
-      const data = await postImageFormData('/api/preprocess', selectedImageUri);
+      const data = await preprocessFromUri(selectedImageUri);
       if (!data.success) throw new Error(data.message ?? 'Preprocess failed');
       setPreprocessedB64(data.processed_image_b64);
     } catch (e: any) {
@@ -423,11 +378,10 @@ export default function CreateScreen() {
 
   const handleLandmarks = async () => {
     if (!preprocessedB64) return;
-    const dataUri = `data:image/png;base64,${preprocessedB64}`;
     setLandmarkLoading(true);
     setLandmarkError(null);
     try {
-      const data = await postImageFormData('/api/landmarks', selectedImageUri!);
+      const data = await landmarksFromBase64(preprocessedB64);
       if (!data.success) throw new Error(data.message ?? 'Landmark detection failed');
       setLandmarkB64(data.landmark_image_b64);
       setLandmarkCount(data.landmark_count);
@@ -444,10 +398,7 @@ export default function CreateScreen() {
     setWarpError(null);
     setWarpResultB64(null);
     try {
-      const data = await postBase64FormData('/api/warp', preprocessedB64, {
-        operation: warpOp,
-        intensity: String(warpIntensity),
-      });
+      const data = await warpFromBase64(preprocessedB64, warpOp, warpIntensity);
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
     } catch (e: any) {
@@ -464,10 +415,7 @@ export default function CreateScreen() {
     setAgingError(null);
     setAgingResultB64(null);
     try {
-      const data = await postBase64FormData('/api/frequency', preprocessedB64, {
-        mode,
-        intensity: String(agingIntensity),
-      });
+      const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
     } catch (e: any) {
