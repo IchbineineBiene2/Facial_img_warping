@@ -263,7 +263,7 @@ export default function CreateScreen() {
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      quality: 1,
+      quality: 0.4,  // Daha düşük çözünürlük (çok hızlı işleme)
       allowsEditing: false,
       selectionLimit: 1,
     });

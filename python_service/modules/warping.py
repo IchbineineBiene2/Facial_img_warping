@@ -138,32 +138,99 @@ def apply_delaunay_warp(src_image: np.ndarray, src_pts: list, dst_pts: list) -> 
 
 def simulate_smile(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
     h, w = image_np.shape[:2]
-    shift = min(h, w) * intensity
-    dst = list(landmarks)
-
-    # Softer smile: corners move outward/upward while lip center lifts a little.
-    lx, ly = dst[61]; dst[61] = (int(lx - shift * 0.09), int(ly - shift * 0.05))
-    rx, ry = dst[291]; dst[291] = (int(rx + shift * 0.09), int(ry - shift * 0.05))
-    lx2, ly2 = dst[78]; dst[78] = (int(lx2 - shift * 0.06), int(ly2 - shift * 0.03))
-    rx2, ry2 = dst[308]; dst[308] = (int(rx2 + shift * 0.06), int(ry2 - shift * 0.03))
-
-    upper_ring = [37, 0, 267, 39, 269]
-    lower_ring = [84, 17, 314, 181, 405]
-    for i in upper_ring:
-        if i < len(dst):
-            x, y = dst[i]
-            dst[i] = (x, int(y - shift * 0.02))
-    for i in lower_ring:
-        if i < len(dst):
-            x, y = dst[i]
-            dst[i] = (x, int(y + shift * 0.02))
-
-    cx, cy = dst[50]; dst[50] = (int(cx - shift * 0.025), cy)
-    cx2, cy2 = dst[280]; dst[280] = (int(cx2 + shift * 0.025), cy2)
-
-    dst = _clip_points(dst, w, h)
-    warped = apply_delaunay_warp(image_np, landmarks, dst)
-    return _blend_output(image_np, warped, intensity, min_alpha=0.45, max_alpha=0.82)
+    intensity_eff = float(np.clip(intensity ** 0.85, 0.0, 1.0))
+    scale = float(min(h, w))
+    
+    # Use flow-based warping for smoother, more natural results
+    flow_x = np.zeros((h, w), dtype=np.float32)
+    flow_y = np.zeros((h, w), dtype=np.float32)
+    
+    # Ağız köşeleri - GÜÇLÜ dışa ve yukarı hareket (ana gülüş noktası)
+    mouth_corners = [61, 291]  # Left & right mouth corners
+    corner_shift_x = scale * 0.045 * intensity_eff  # 0.032 → 0.045 (çok daha güçlü)
+    corner_shift_y = -scale * 0.035 * intensity_eff  # -0.024 → -0.035 (çok daha güçlü)
+    corner_sigma = scale * 0.085  # Biraz daha büyük radius
+    
+    if mouth_corners[0] < len(landmarks):
+        x, y = landmarks[mouth_corners[0]]
+        _add_gaussian_flow(flow_x, flow_y, (x, y), (-corner_shift_x, corner_shift_y), corner_sigma)
+    if mouth_corners[1] < len(landmarks):
+        x, y = landmarks[mouth_corners[1]]
+        _add_gaussian_flow(flow_x, flow_y, (x, y), (corner_shift_x, corner_shift_y), corner_sigma)
+    
+    # Üst dudak - yeterince yukarı
+    upper_lip_points = [0, 37, 267]
+    upper_shift_y = -scale * 0.014 * intensity_eff
+    upper_sigma = scale * 0.055
+    
+    for i in upper_lip_points:
+        if i < len(landmarks):
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, upper_shift_y), upper_sigma)
+    
+    # Alt dudak - biraz aşağı
+    lower_lip_points = [14, 84, 314]
+    lower_shift_y = scale * 0.012 * intensity_eff
+    lower_sigma = scale * 0.055
+    
+    for i in lower_lip_points:
+        if i < len(landmarks):
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, lower_shift_y), lower_sigma)
+    
+    # Ağız kenarları - minimal hareket
+    mouth_edge = [78, 308]  
+    edge_shift_x = scale * 0.012 * intensity_eff
+    edge_sigma = scale * 0.050
+    
+    if mouth_edge[0] < len(landmarks):
+        x, y = landmarks[mouth_edge[0]]
+        _add_gaussian_flow(flow_x, flow_y, (x, y), (-edge_shift_x, 0.0), edge_sigma)
+    if mouth_edge[1] < len(landmarks):
+        x, y = landmarks[mouth_edge[1]]
+        _add_gaussian_flow(flow_x, flow_y, (x, y), (edge_shift_x, 0.0), edge_sigma)
+    
+    # Gözler - hafif yukarı hareket + üst kapak biraz aşağı (kısılma efekti)
+    eye_points = [33, 133, 362, 263]
+    eye_shift_y = -scale * 0.006 * intensity_eff  # Reduced
+    eye_sigma = scale * 0.070
+    
+    for i in eye_points:
+        if i < len(landmarks):
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, eye_shift_y), eye_sigma)
+    
+    # Üst göz kapağı - aşağı hareket (gözleri kısma efekti)
+    upper_lid_points = [159, 160, 161, 386, 385, 384]
+    lid_shift_y = scale * 0.004 * intensity_eff
+    lid_sigma = scale * 0.040
+    
+    for i in upper_lid_points:
+        if i < len(landmarks):
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, lid_shift_y), lid_sigma)
+    
+    # Kaş bölgesi - hafif aşağı hareket
+    brow_points = [46, 52, 276, 282]
+    brow_shift_y = scale * 0.005 * intensity_eff
+    brow_sigma = scale * 0.085
+    
+    for i in brow_points:
+        if i < len(landmarks):
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, brow_shift_y), brow_sigma)
+    
+    # Yanaklar - biraz daha belirgin yukarı ve dışa hareket
+    cheek_points = [205, 425]
+    cheek_shift_x = scale * 0.015 * intensity_eff  # 0.012 → 0.015
+    cheek_shift_y = -scale * 0.015 * intensity_eff  # -0.012 → -0.015
+    cheek_sigma = scale * 0.090
+    
+    if cheek_points[0] < len(landmarks):
+        x, y = landmarks[cheek_points[0]]
+        _add_gaussian_flow(flow_x, flow_y, (x, y), (-cheek_shift_x, cheek_shift_y), cheek_sigma)
+    if cheek_points[1] < len(landmarks):
+        x, y = landmarks[cheek_points[1]]
+        _add_gaussian_flow(flow_x, flow_y, (x, y), (cheek_shift_x, cheek_shift_y), cheek_sigma)
+    
+    warped = _apply_flow_warp(image_np, flow_x, flow_y)
+    # Natural blend - daha fazla original görüntü kalıyor
+    return _blend_output(image_np, warped, intensity_eff, min_alpha=0.50, max_alpha=0.85)
 
 
 def raise_eyebrows(image_np: np.ndarray, landmarks: list, intensity: float = 0.5) -> np.ndarray:
@@ -171,41 +238,39 @@ def raise_eyebrows(image_np: np.ndarray, landmarks: list, intensity: float = 0.5
     intensity_eff = float(np.clip(intensity ** 0.85, 0.0, 1.0))
     scale = float(min(h, w))
     brow_shift = -scale * 0.042 * intensity_eff
-    lid_shift = -scale * 0.016 * intensity_eff
     key = get_key_landmark_indices()
 
     flow_x = np.zeros((h, w), dtype=np.float32)
     flow_y = np.zeros((h, w), dtype=np.float32)
 
-    brow_sigma = scale * 0.055
-    lid_sigma = scale * 0.045
-    brow_ids = [i for i in key["left_brow"] + key["right_brow"] if i < len(landmarks)]
+    # SADECE kaş noktalarını taşı - sigma arttırıldı
+    # Göz yakın noktaları hariç (105, 107, 334, 336 out)
+    brow_sigma = scale * 0.048
+    brow_ids_full = [i for i in key["left_brow"] + key["right_brow"] if i < len(landmarks)]
+    brow_ids = [i for i in brow_ids_full if i not in [105, 107, 334, 336]]  # Göze yakın noktalar çıkar
     for i in brow_ids:
         if i < len(landmarks):
             _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, brow_shift), brow_sigma)
 
-    upper_lids = [159, 160, 161, 386, 385, 384]
-    for i in upper_lids:
-        if i < len(landmarks):
-            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, lid_shift), lid_sigma)
-
-    # Move forehead area slightly to avoid stretched "double eyebrow" artifacts.
+    # Forehead hafif yukarı - kaşın doğal kalması için
     forehead = [10, 67, 109, 338, 297]
     for i in forehead:
         if i < len(landmarks):
-            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, brow_shift * 0.25), scale * 0.07)
-
+            _add_gaussian_flow(flow_x, flow_y, landmarks[i], (0.0, brow_shift * 0.15), scale * 0.035)
+    
+    # Zone mask: Kaş + forehead - göz altı dışarıda
     left_zone = [landmarks[i] for i in brow_ids if landmarks[i][0] < w // 2]
     right_zone = [landmarks[i] for i in brow_ids if landmarks[i][0] >= w // 2]
-    for i in [33, 133, 159, 160, 161, 10, 67, 109]:
+    
+    for i in [10, 67, 109]:
         if i < len(landmarks):
             left_zone.append(landmarks[i])
-    for i in [362, 263, 386, 385, 384, 10, 338, 297]:
+    for i in [10, 338, 297]:
         if i < len(landmarks):
             right_zone.append(landmarks[i])
 
-    mask_left = _region_mask(left_zone, h, w, blur=39, dilate_iter=2)
-    mask_right = _region_mask(right_zone, h, w, blur=39, dilate_iter=2)
+    mask_left = _region_mask(left_zone, h, w, blur=22, dilate_iter=1)
+    mask_right = _region_mask(right_zone, h, w, blur=22, dilate_iter=1)
     zone_mask = np.clip(mask_left + mask_right, 0.0, 1.0)
     flow_x *= zone_mask
     flow_y *= zone_mask
