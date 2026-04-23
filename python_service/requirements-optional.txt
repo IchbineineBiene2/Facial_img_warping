@@ -1,0 +1,4 @@
+# Optional dependencies for higher quality landmark fusion.
+# dlib may require a compatible Python version and C++ build toolchain.
+# If install fails on Python 3.13, use Python 3.11 virtualenv.
+dlib>=19.24.0

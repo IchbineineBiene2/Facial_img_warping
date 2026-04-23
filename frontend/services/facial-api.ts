@@ -124,3 +124,60 @@ export async function frequencyFromBase64(imageBase64: string, mode: 'aging' | '
   formData.append('intensity', String(intensity));
   return requestJson('/api/frequency', formData);
 }
+
+export type ProMetrics = {
+  mse: number;
+  psnr: number;
+  ssim: number;
+  hf_lf_ratio_before?: number;
+  hf_lf_ratio_after?: number;
+  hf_lf_ratio_delta?: number;
+};
+
+export type ProWarpOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face';
+
+export async function warpProFromBase64(
+  imageBase64: string,
+  operation: ProWarpOperation,
+  intensity: number,
+  rbfSmooth: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+    temporalSmoothing?: boolean;
+    emaAlpha?: number;
+    streamId?: string;
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('operation', operation);
+  formData.append('intensity', String(intensity));
+  formData.append('rbf_smooth', String(rbfSmooth));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  formData.append('temporal_smoothing', String(options?.temporalSmoothing ?? false));
+  formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
+  formData.append('stream_id', options?.streamId ?? 'default');
+  return requestJson('/api/warp/pro', formData);
+}
+
+export async function frequencyProFromBase64(
+  imageBase64: string,
+  mode: 'aging' | 'deaging',
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+    temporalSmoothing?: boolean;
+    emaAlpha?: number;
+    streamId?: string;
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('mode', mode);
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  formData.append('temporal_smoothing', String(options?.temporalSmoothing ?? false));
+  formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
+  formData.append('stream_id', options?.streamId ?? 'default');
+  return requestJson('/api/frequency/pro', formData);
+}

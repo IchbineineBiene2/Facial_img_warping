@@ -1,19 +1,26 @@
+import Slider from '@react-native-community/slider';
+import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
+import * as Print from 'expo-print';
 import { useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
+    Animated,
     Modal,
     PanResponder,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
     Switch,
     Text,
     View,
-    useWindowDimensions,
+    useWindowDimensions
 } from 'react-native';
 
 import { SideNav } from '@/components/side-nav';
@@ -21,7 +28,16 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { frequencyFromBase64, landmarksFromBase64, preprocessFromUri, warpFromBase64 } from '@/services/facial-api';
+import {
+    frequencyFromBase64,
+    frequencyProFromBase64,
+    landmarksFromBase64,
+    preprocessFromUri,
+    warpFromBase64,
+    warpProFromBase64,
+    type ProMetrics,
+    type ProWarpOperation
+} from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
 
 const MIN_WIDTH = 512;
@@ -48,6 +64,39 @@ type ContainLayout = {
   renderHeight: number;
   offsetX: number;
   offsetY: number;
+};
+
+type ProOperation = ProWarpOperation | 'aging' | 'deaging';
+type ProPreset = 'natural' | 'balanced' | 'strong';
+
+const PRO_OPERATIONS: ProOperation[] = [
+  'smile_enhancement',
+  'brow_lift',
+  'lip_plump',
+  'slim_face',
+  'aging',
+  'deaging',
+];
+
+const PRO_LABEL: Record<ProOperation, string> = {
+  smile_enhancement: 'Pro Smile',
+  brow_lift: 'Pro Brow Lift',
+  lip_plump: 'Pro Lip Plump',
+  slim_face: 'Pro Slim Face',
+  aging: 'Pro Aging',
+  deaging: 'Pro De-Aging',
+};
+
+const PRO_PRESET_VALUES: Record<ProPreset, { intensity: number; rbfSmooth: number }> = {
+  natural: { intensity: 0.3, rbfSmooth: 4.0 },
+  balanced: { intensity: 0.6, rbfSmooth: 3.0 },
+  strong: { intensity: 0.85, rbfSmooth: 2.0 },
+};
+
+const PRO_PRESET_LABEL: Record<ProPreset, string> = {
+  natural: 'Natural',
+  balanced: 'Balanced',
+  strong: 'Strong',
 };
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -132,6 +181,19 @@ export default function CreateScreen() {
   const [agingError, setAgingError] = useState<string | null>(null);
   const [agingResultB64, setAgingResultB64] = useState<string | null>(null);
   const [agingMode, setAgingMode] = useState<'aging' | 'deaging'>('aging');
+  const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
+  const [proPreset, setProPreset] = useState<ProPreset>('balanced');
+  const [proIntensity, setProIntensity] = useState(0.65);
+  const [proRbfSmooth, setProRbfSmooth] = useState(2.8);
+  const [proLoading, setProLoading] = useState(false);
+  const [proError, setProError] = useState<string | null>(null);
+  const [proResultB64, setProResultB64] = useState<string | null>(null);
+  const [proMetrics, setProMetrics] = useState<ProMetrics | null>(null);
+  const [spectrumBeforeB64, setSpectrumBeforeB64] = useState<string | null>(null);
+  const [spectrumAfterB64, setSpectrumAfterB64] = useState<string | null>(null);
+  const proDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [proCompareHeld, setProCompareHeld] = useState(false);
+  const proCompareOpacity = useRef(new Animated.Value(0)).current;
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
 
   useEffect(() => {
@@ -143,6 +205,14 @@ export default function CreateScreen() {
       ensureCropBox(cropStageLayout);
     }
   }, [cropEditorVisible, cropStageLayout, selectedImageSize]);
+
+  useEffect(() => {
+    Animated.timing(proCompareOpacity, {
+      toValue: proCompareHeld ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [proCompareHeld, proCompareOpacity]);
 
   const updateCropBox = (nextBox: CropBox | null) => {
     cropBoxRef.current = nextBox;
@@ -365,6 +435,12 @@ export default function CreateScreen() {
     setLandmarkCount(null);
     setWarpResultB64(null);
     setAgingResultB64(null);
+    setProResultB64(null);
+    setProMetrics(null);
+    setSpectrumBeforeB64(null);
+    setSpectrumAfterB64(null);
+    setProCompareHeld(false);
+    proCompareOpacity.setValue(0);
     try {
       const data = await preprocessFromUri(selectedImageUri);
       if (!data.success) throw new Error(data.message ?? 'Preprocess failed');
@@ -423,6 +499,169 @@ export default function CreateScreen() {
     } finally {
       setAgingLoading(false);
     }
+  };
+
+  const runProOperation = async (override?: { intensity?: number; rbfSmooth?: number; operation?: ProOperation }) => {
+    if (!preprocessedB64) return;
+
+    const effectiveOperation = override?.operation ?? proOperation;
+    const effectiveIntensity = override?.intensity ?? proIntensity;
+    const effectiveRbfSmooth = override?.rbfSmooth ?? proRbfSmooth;
+
+    setProCompareHeld(false);
+
+    setProLoading(true);
+    setProError(null);
+    try {
+      if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
+        const data = await frequencyProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, {
+          landmarkBackend: 'hybrid',
+          temporalSmoothing: true,
+          emaAlpha: 0.62,
+          streamId: 'pro-ui',
+        });
+        if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
+        setProResultB64(data.result_image_b64);
+        setProMetrics(data.metrics ?? null);
+        setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
+        setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
+      } else {
+        const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
+          landmarkBackend: 'hybrid',
+          temporalSmoothing: true,
+          emaAlpha: 0.62,
+          streamId: 'pro-ui',
+        });
+        if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
+        setProResultB64(data.result_image_b64);
+        setProMetrics(data.metrics ?? null);
+        setSpectrumBeforeB64(null);
+        setSpectrumAfterB64(null);
+      }
+    } catch (e: any) {
+      setProError(e?.message ?? 'Unknown pro error');
+    } finally {
+      setProLoading(false);
+    }
+  };
+
+  const applyProPreset = (preset: ProPreset) => {
+    const values = PRO_PRESET_VALUES[preset];
+    setProPreset(preset);
+    setProIntensity(values.intensity);
+    setProRbfSmooth(values.rbfSmooth);
+
+    if (!preprocessedB64) return;
+    if (proDebounceRef.current) {
+      clearTimeout(proDebounceRef.current);
+    }
+    runProOperation({ intensity: values.intensity, rbfSmooth: values.rbfSmooth });
+  };
+
+  useEffect(() => {
+    if (!preprocessedB64) return;
+
+    if (proDebounceRef.current) {
+      clearTimeout(proDebounceRef.current);
+    }
+
+    proDebounceRef.current = setTimeout(() => {
+      runProOperation();
+    }, 280);
+
+    return () => {
+      if (proDebounceRef.current) {
+        clearTimeout(proDebounceRef.current);
+      }
+    };
+  }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth]);
+
+  const buildReportCsv = () => {
+    const metrics = proMetrics;
+    const rows: Array<[string, string]> = [
+      ['operation', PRO_LABEL[proOperation]],
+      ['intensity', proIntensity.toFixed(2)],
+      ['rbf_smooth', proRbfSmooth.toFixed(2)],
+      ['mse', metrics ? String(metrics.mse) : ''],
+      ['psnr', metrics ? String(metrics.psnr) : ''],
+      ['ssim', metrics ? String(metrics.ssim) : ''],
+      ['hf_lf_ratio_before', metrics?.hf_lf_ratio_before != null ? String(metrics.hf_lf_ratio_before) : ''],
+      ['hf_lf_ratio_after', metrics?.hf_lf_ratio_after != null ? String(metrics.hf_lf_ratio_after) : ''],
+      ['hf_lf_ratio_delta', metrics?.hf_lf_ratio_delta != null ? String(metrics.hf_lf_ratio_delta) : ''],
+    ];
+    return rows.map(([k, v]) => `${k},${v}`).join('\n');
+  };
+
+  const exportCsv = async () => {
+    if (!proResultB64 || !proMetrics) {
+      Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
+      return;
+    }
+
+    const csv = buildReportCsv();
+    const fileName = `pro-report-${Date.now()}.csv`;
+
+    if (Platform.OS === 'web') {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setStatusMessage('CSV raporu indirildi.');
+      return;
+    }
+
+    const dir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+    if (!dir) {
+      Alert.alert('Export Hatası', 'Dosya dizini bulunamadı.');
+      return;
+    }
+    const uri = `${dir}${fileName}`;
+    await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType: 'text/csv' });
+    }
+    setStatusMessage('CSV raporu paylaşıma hazırlandı.');
+  };
+
+  const exportPdf = async () => {
+    if (!proResultB64 || !proMetrics) {
+      Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
+      return;
+    }
+
+    const html = `
+      <html>
+      <body style="font-family: Arial, sans-serif; padding: 24px;">
+        <h2>Facial Pro Report</h2>
+        <p><b>Operation:</b> ${PRO_LABEL[proOperation]}</p>
+        <p><b>Intensity:</b> ${proIntensity.toFixed(2)} | <b>RBF Smooth:</b> ${proRbfSmooth.toFixed(2)}</p>
+        <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; margin-top: 12px;">
+          <tr><th>Metric</th><th>Value</th></tr>
+          <tr><td>MSE</td><td>${proMetrics.mse}</td></tr>
+          <tr><td>PSNR</td><td>${proMetrics.psnr}</td></tr>
+          <tr><td>SSIM</td><td>${proMetrics.ssim}</td></tr>
+          <tr><td>HF/LF Before</td><td>${proMetrics.hf_lf_ratio_before ?? ''}</td></tr>
+          <tr><td>HF/LF After</td><td>${proMetrics.hf_lf_ratio_after ?? ''}</td></tr>
+          <tr><td>HF/LF Delta</td><td>${proMetrics.hf_lf_ratio_delta ?? ''}</td></tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const { uri } = await Print.printToFileAsync({ html });
+    if (Platform.OS === 'web') {
+      setStatusMessage('PDF raporu oluşturuldu.');
+      return;
+    }
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType: 'application/pdf' });
+    }
+    setStatusMessage('PDF raporu paylaşıma hazırlandı.');
   };
 
   return (
@@ -701,6 +940,171 @@ export default function CreateScreen() {
                 </View>
               </View>
             ) : null}
+
+            {/* Section 5: Pro Lab */}
+            <ThemedText type="defaultSemiBold">5. Pro Lab (Canlı)</ThemedText>
+            <ThemedText style={styles.helperText}>Operasyon: {PRO_LABEL[proOperation]}</ThemedText>
+            <View style={styles.warpGrid}>
+              {PRO_OPERATIONS.map((op) => (
+                <Pressable
+                  key={op}
+                  style={[
+                    styles.warpOpButton,
+                    {
+                      backgroundColor: proOperation === op ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                      opacity: preprocessedB64 ? 1 : 0.4,
+                    },
+                  ]}
+                  onPress={() => setProOperation(op)}
+                  disabled={!preprocessedB64}>
+                  <ThemedText style={[styles.warpOpText, { color: proOperation === op ? tintTextColor : colors.text }]}>
+                    {PRO_LABEL[op]}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={styles.presetRow}>
+              {(['natural', 'balanced', 'strong'] as ProPreset[]).map((preset) => (
+                <Pressable
+                  key={preset}
+                  style={[
+                    styles.presetButton,
+                    {
+                      backgroundColor: proPreset === preset ? Colors[colorScheme].tint : 'rgba(120,120,120,0.15)',
+                      opacity: preprocessedB64 ? 1 : 0.45,
+                    },
+                  ]}
+                  onPress={() => applyProPreset(preset)}
+                  disabled={!preprocessedB64}>
+                  <ThemedText style={[styles.warpOpText, { color: proPreset === preset ? tintTextColor : colors.text }]}>
+                    {PRO_PRESET_LABEL[preset]}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+
+            <ThemedText style={styles.helperText}>Intensity: {proIntensity.toFixed(2)}</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={0}
+              maximumValue={1}
+              step={0.01}
+              value={proIntensity}
+              onValueChange={setProIntensity}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            <ThemedText style={styles.helperText}>RBF Smooth: {proRbfSmooth.toFixed(1)}</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={0.8}
+              maximumValue={10}
+              step={0.1}
+              value={proRbfSmooth}
+              onValueChange={setProRbfSmooth}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64}
+            />
+
+            {proLoading ? <ActivityIndicator /> : null}
+            {proError ? <Text style={styles.errorText}>{proError}</Text> : null}
+
+            {proResultB64 && preprocessedB64 ? (
+              <View style={styles.compareCard}>
+                <View style={styles.compareHeaderRow}>
+                  <ThemedText style={styles.sideLabel}>Pro Sonuç</ThemedText>
+                  <View style={styles.compareHintPill}>
+                    <ThemedText style={styles.compareHintText}>Basılı tut: Orijinal</ThemedText>
+                  </View>
+                </View>
+
+                <Pressable
+                  style={styles.compareStage}
+                  onPress={() => setLightboxUri(`data:image/png;base64,${proResultB64}`)}>
+                  <Image source={{ uri: `data:image/png;base64,${proResultB64}` }} style={styles.compareImage} contentFit="contain" />
+
+                  {preprocessedB64 ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.compareOverlay,
+                        {
+                          opacity: proCompareOpacity,
+                        },
+                      ]}>
+                      <Image source={{ uri: `data:image/png;base64,${preprocessedB64}` }} style={styles.compareImage} contentFit="contain" />
+                      <View style={styles.originalTag}>
+                        <ThemedText style={styles.originalTagText}>Original</ThemedText>
+                      </View>
+                    </Animated.View>
+                  ) : null}
+
+                  <Pressable
+                    style={styles.compareFab}
+                    onPressIn={() => setProCompareHeld(true)}
+                    onPressOut={() => setProCompareHeld(false)}
+                    onPress={() => null}>
+                    <Ionicons name="swap-horizontal" size={18} color="#fff" />
+                  </Pressable>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {proMetrics ? (
+              <View style={styles.metricsCard}>
+                <ThemedText type="defaultSemiBold">Otomatik Kalite Metrikleri</ThemedText>
+                <ThemedText style={styles.helperText}>MSE: {proMetrics.mse.toFixed(4)}</ThemedText>
+                <ThemedText style={styles.helperText}>PSNR: {proMetrics.psnr.toFixed(4)}</ThemedText>
+                <ThemedText style={styles.helperText}>SSIM: {proMetrics.ssim.toFixed(4)}</ThemedText>
+                {proMetrics.hf_lf_ratio_before != null ? (
+                  <ThemedText style={styles.helperText}>HF/LF Before: {proMetrics.hf_lf_ratio_before.toFixed(4)}</ThemedText>
+                ) : null}
+                {proMetrics.hf_lf_ratio_after != null ? (
+                  <ThemedText style={styles.helperText}>HF/LF After: {proMetrics.hf_lf_ratio_after.toFixed(4)}</ThemedText>
+                ) : null}
+                {proMetrics.hf_lf_ratio_delta != null ? (
+                  <ThemedText style={styles.helperText}>HF/LF Delta: {proMetrics.hf_lf_ratio_delta.toFixed(4)}</ThemedText>
+                ) : null}
+              </View>
+            ) : null}
+
+            {spectrumBeforeB64 && spectrumAfterB64 ? (
+              <View style={styles.sideBySide}>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Spectrum Before</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumBeforeB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${spectrumBeforeB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Spectrum After</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumAfterB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${spectrumAfterB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
+            <View style={styles.agingRow}>
+              <Pressable
+                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: proMetrics ? 1 : 0.5 }]}
+                onPress={exportCsv}
+                disabled={!proMetrics}>
+                <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>CSV Export</ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: proMetrics ? 1 : 0.5 }]}
+                onPress={exportPdf}
+                disabled={!proMetrics}>
+                <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>PDF Export</ThemedText>
+              </Pressable>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -1128,6 +1532,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  presetRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  presetButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
   sliderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1152,9 +1568,76 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 3,
   },
+  nativeSlider: {
+    width: '100%',
+    height: 38,
+  },
   sideBySide: {
     flexDirection: 'row',
     gap: 8,
+  },
+  compareCard: {
+    width: '100%',
+    gap: 8,
+  },
+  compareHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  compareHintPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(120,120,120,0.12)',
+  },
+  compareHintText: {
+    fontSize: 11,
+    fontWeight: '700',
+    opacity: 0.8,
+  },
+  compareStage: {
+    width: '100%',
+    height: 176,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(120,120,120,0.1)',
+    position: 'relative',
+  },
+  compareImage: {
+    width: '100%',
+    height: '100%',
+  },
+  compareOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  originalTag: {
+    position: 'absolute',
+    left: 10,
+    top: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  originalTagText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  compareFab: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
   },
   sideBox: {
     flex: 1,
@@ -1174,6 +1657,14 @@ const styles = StyleSheet.create({
   agingRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  metricsCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.2)',
+    backgroundColor: 'rgba(120,120,120,0.08)',
+    padding: 10,
+    gap: 2,
   },
   lightboxBackdrop: {
     flex: 1,

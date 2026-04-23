@@ -92,7 +92,9 @@ app.get('/api/health', (_req, res) => {
 app.post('/api/preprocess', (req, res) => proxyToPython('/preprocess', req, res));
 app.post('/api/landmarks', (req, res) => proxyToPython('/landmarks', req, res));
 app.post('/api/warp', (req, res) => proxyToPython('/warp', req, res));
+app.post('/api/warp/pro', (req, res) => proxyToPython('/warp/pro', req, res));
 app.post('/api/frequency', (req, res) => proxyToPython('/frequency', req, res));
+app.post('/api/frequency/pro', (req, res) => proxyToPython('/frequency/pro', req, res));
 
 app.post('/api/evaluation', (req, res) => {
   const upload = resolveUploadOrFail(res, req.body);
