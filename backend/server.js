@@ -113,7 +113,7 @@ app.get('/api/health', (_req, res) => {
       port: Number(PORT),
       pythonService: PYTHON_SERVICE_URL,
       database: db.dbFile,
-      modules: ['preprocess', 'landmarks', 'expression-transfer', 'warp', 'frequency', 'evaluation', 'export'],
+      modules: ['preprocess', 'landmarks', 'expression-transfer', 'warp', 'frequency', 'ai-aging', 'evaluation', 'export'],
       counts,
     },
     { phase: 'sqlite-ready' }
@@ -123,6 +123,7 @@ app.get('/api/health', (_req, res) => {
 // Proxy multipart image endpoints directly to the Python CV service.
 app.post('/api/preprocess', (req, res) => proxyToPython('/preprocess', req, res));
 app.post('/api/estimate-age', (req, res) => proxyToPython('/estimate-age', req, res));
+app.post('/api/aging/ai', (req, res) => proxyToPython('/aging/ai', req, res));
 app.post('/api/landmarks', (req, res) => proxyToPython('/landmarks', req, res));
 app.post('/api/expression/transfer', (req, res) => proxyToPython('/expression/transfer', req, res));
 app.post('/api/warp', (req, res) => proxyToPython('/warp', req, res));

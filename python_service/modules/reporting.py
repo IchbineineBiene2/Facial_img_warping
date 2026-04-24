@@ -214,39 +214,3 @@ def generate_pdf_report(
         operation,
         datetime.now(timezone.utc).isoformat(),
     )
-                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#E2E8F0")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F8FAFC")),
-            ]
-        )
-    )
-    story.append(image_table)
-    story.append(Spacer(1, 0.5 * cm))
-
-    metric_table_data = [["Metric", "Value", "Purpose / Acceptable Range"]]
-    metric_table_data.extend([[row["metric"], row["value"], row["purpose"]] for row in rows])
-
-    metric_table = Table(metric_table_data, colWidths=[3.0 * cm, 3.3 * cm, 9.6 * cm], hAlign="LEFT")
-    metric_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 10),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("FONTSIZE", (0, 1), (-1, -1), 9),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#FFFFFF"), colors.HexColor("#F8FAFC")]),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ]
-        )
-    )
-    story.append(metric_table)
-
->>>>>>> main
-    doc.build(story)
-    return buffer.getvalue()

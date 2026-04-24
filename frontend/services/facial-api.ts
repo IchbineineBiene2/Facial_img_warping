@@ -68,7 +68,9 @@ function decodeBase64ToBytes(input: string): Uint8Array {
 
 function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
   const bytes = decodeBase64ToBytes(b64);
-  return new Blob([bytes], { type: mimeType });
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return new Blob([buffer], { type: mimeType });
 }
 
 async function requestJson(endpoint: string, body: FormData): Promise<any> {
@@ -227,6 +229,13 @@ export type ProMetrics = {
   mse: number;
   psnr: number;
   ssim: number;
+  total_spectral_energy_before?: number;
+  total_spectral_energy_after?: number;
+  total_spectral_energy_delta?: number;
+  low_frequency_energy_before?: number;
+  low_frequency_energy_after?: number;
+  high_frequency_energy_before?: number;
+  high_frequency_energy_after?: number;
   hf_lf_ratio_before?: number;
   hf_lf_ratio_after?: number;
   hf_lf_ratio_delta?: number;
@@ -294,6 +303,22 @@ export async function frequencyProFromBase64(
   formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
   formData.append('stream_id', options?.streamId ?? 'default');
   return requestJson('/api/frequency/pro', formData);
+}
+
+export async function aiGuidedAgingFromBase64(
+  imageBase64: string,
+  mode: 'aging' | 'deaging',
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+  }
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('mode', mode);
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  return requestJson('/api/aging/ai', formData);
 }
 
 export async function exportCsvReportFromBase64(params: {

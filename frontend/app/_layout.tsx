@@ -4,19 +4,23 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { AuthProvider } from '@/hooks/use-auth';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { StudioThemeProvider, useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
   anchor: '(tabs)',
 };
 
-export default function RootLayout() {
+function AppStack() {
   const colorScheme = useColorScheme();
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AuthProvider>
-        <Stack>
+        <Stack
+          screenOptions={{
+            animation: 'fade_from_bottom',
+            animationDuration: 260,
+          }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="auth" options={{ title: 'Oturum Ac' }} />
           <Stack.Screen name="register" options={{ title: 'Kaydol' }} />
@@ -29,5 +33,13 @@ export default function RootLayout() {
         <StatusBar style="auto" />
       </AuthProvider>
     </ThemeProvider>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <StudioThemeProvider>
+      <AppStack />
+    </StudioThemeProvider>
   );
 }

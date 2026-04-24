@@ -1,0 +1,2 @@
+Facial backend listening on http://localhost:3000
+Proxying CV requests to http://localhost:8000

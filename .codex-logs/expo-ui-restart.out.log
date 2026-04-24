@@ -1,0 +1,41 @@
+env: load .env
+env: export EXPO_PUBLIC_API_URL
+Starting project at C:\Users\ahmet\Documents\GitHub\Facial_img_warping\frontend
+React Compiler enabled
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8082
+Logs for your project will appear below.
+Web node_modules\expo-router\entry.js ▓▓▓▓░░░░░░░░░░░░ 29.3% (117/270)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓▓▓▓░░░░░░░░ 56.0% (476/645)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓▓▓░░░░░ 72.4% (837/984)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 88.4% (1027/1093)
+λ Bundled 7182ms node_modules\expo-router\node\render.js (1262 modules)
+Web Bundled 8541ms node_modules\expo-router\entry.js (1260 modules)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓░░░░░░░░░ 47.6% (472/684)
+Web Bundled 2916ms node_modules\expo-router\entry.js (1260 modules)
+ LOG  [web] Logs will appear in the browser console
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+λ Bundled 38ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 346ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 33ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 318ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 28ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 337ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 30ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 296ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 24ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 291ms node_modules\expo-router\entry.js (1 module)
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web Bundled 299ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 324ms node_modules\expo-router\node\render.js (1 module)
+λ Bundled 32ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 268ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 22ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 251ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 25ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 250ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 28ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 277ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 29ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 308ms node_modules\expo-router\entry.js (1 module)

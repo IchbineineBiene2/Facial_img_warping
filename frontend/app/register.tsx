@@ -1,275 +1,210 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function RegisterScreen() {
   const router = useRouter();
   const { signIn } = useAuth();
-  const colorScheme = useColorScheme() ?? 'light';
-  const colors = Colors[colorScheme];
-  const { width } = useWindowDimensions();
-
+  const colorScheme = useColorScheme() ?? 'dark';
+  const isDark = colorScheme === 'dark';
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordRepeat, setPasswordRepeat] = useState('');
 
-  const isWide = width >= 980;
-
   const onSubmit = () => {
-    if (!fullName.trim() || !email.trim() || !password.trim()) {
+    if (!fullName.trim() || !email.trim() || !password.trim() || password !== passwordRepeat) {
       return;
     }
-
-    if (password !== passwordRepeat) {
-      return;
-    }
-
     signIn(fullName.trim());
     router.replace('/');
   };
 
   return (
-    <ThemedView style={styles.screen}>
-      <View style={[styles.contentWrap, isWide && styles.contentWrapWide]}>
-        <View style={[styles.visualArea, { backgroundColor: colorScheme === 'dark' ? '#1D2326' : '#FFE9D2' }]}>
-          <View style={[styles.floatCard, styles.floatTopLeft, { backgroundColor: '#E8C5FF' }]}>
-            <ThemedText type="defaultSemiBold">Register</ThemedText>
-          </View>
-
-          <View style={[styles.heroCard, { backgroundColor: colorScheme === 'dark' ? '#2E3A41' : '#FFCF8C' }]}>
-            <ThemedText style={styles.heroText}>Build Profile</ThemedText>
-          </View>
-
-          <View style={[styles.outlineSticker, styles.outlineLeft]}>
-            <ThemedText type="defaultSemiBold" style={styles.stickerText}>
-              Create
-            </ThemedText>
-          </View>
-
-          <View style={[styles.outlineSticker, styles.outlineRight]}>
-            <ThemedText type="defaultSemiBold" style={styles.stickerText}>
-              Share
-            </ThemedText>
-          </View>
-
-          <View style={[styles.floatCard, styles.floatBottomLeft, { backgroundColor: '#CDEFEA' }]}>
-            <ThemedText type="defaultSemiBold">Data</ThemedText>
-          </View>
-
-          <View style={[styles.floatCard, styles.floatBottomRight, { backgroundColor: '#FFD9C2' }]}>
-            <ThemedText type="defaultSemiBold">Cloud</ThemedText>
-          </View>
-
-          <ThemedText style={styles.visualCaption}>Kayit tarafı tanitim gorselleri bu alanda doner.</ThemedText>
-        </View>
-
-        <View
-          style={[
-            styles.formCard,
-            {
-              borderColor: colorScheme === 'dark' ? '#303538' : '#D7DEE5',
-              backgroundColor: colorScheme === 'dark' ? '#1B1E20' : '#F7FAFF',
-            },
-          ]}>
-          <ThemedText type="title" style={styles.title}>
-            Kaydol
-          </ThemedText>
-          <ThemedText style={styles.subtitle}>Yeni hesap olustur ve basla.</ThemedText>
-
-          <TextInput
-            placeholder="Ad Soyad"
-            placeholderTextColor={colorScheme === 'dark' ? '#9BA1A6' : '#687076'}
-            value={fullName}
-            onChangeText={setFullName}
-            style={[styles.input, { borderColor: colorScheme === 'dark' ? '#41484C' : '#C6CED6', color: colors.text }]}
-          />
-
-          <TextInput
-            placeholder="E-posta"
-            placeholderTextColor={colorScheme === 'dark' ? '#9BA1A6' : '#687076'}
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            style={[styles.input, { borderColor: colorScheme === 'dark' ? '#41484C' : '#C6CED6', color: colors.text }]}
-          />
-
-          <TextInput
-            placeholder="Sifre"
-            placeholderTextColor={colorScheme === 'dark' ? '#9BA1A6' : '#687076'}
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-            style={[styles.input, { borderColor: colorScheme === 'dark' ? '#41484C' : '#C6CED6', color: colors.text }]}
-          />
-
-          <TextInput
-            placeholder="Sifre (Tekrar)"
-            placeholderTextColor={colorScheme === 'dark' ? '#9BA1A6' : '#687076'}
-            secureTextEntry
-            value={passwordRepeat}
-            onChangeText={setPasswordRepeat}
-            style={[styles.input, { borderColor: colorScheme === 'dark' ? '#41484C' : '#C6CED6', color: colors.text }]}
-          />
-          {password.length > 0 && passwordRepeat.length > 0 && password !== passwordRepeat ? (
-            <Text style={{ color: 'red', fontSize: 12, marginTop: 4 }}>Passwords do not match</Text>
-          ) : null}
-
-          <Pressable onPress={onSubmit} style={[styles.submitBtn, { backgroundColor: colors.tint }]}>
-            <ThemedText style={styles.submitText}>Kaydol</ThemedText>
+    <StudioScreen withNav={false}>
+      <View style={[styles.backdrop, !isDark ? styles.backdropLight : null]}>
+        <View style={styles.blurBlockOne} />
+        <View style={styles.blurBlockTwo} />
+        <View style={[styles.modalCard, isDark ? styles.modalCardDark : null]}>
+          <Pressable style={styles.closeButton} onPress={() => router.back()}>
+            <Ionicons name="close" size={24} color="#737B8D" />
           </Pressable>
 
-          <Pressable onPress={() => router.push('/auth')} style={styles.linkBtn}>
-            <ThemedText type="link">Hesabin var mi? Oturum Ac</ThemedText>
+          <ThemedText style={[styles.title, isDark ? styles.titleDark : null]}>Hesap Oluştur</ThemedText>
+          <ThemedText style={[styles.subtitle, isDark ? styles.subtitleDark : null]}>FaceMorph topluluğuna katılarak çalışmalarını kaydet.</ThemedText>
+
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>İSİM SOYİSİM</ThemedText>
+            <TextInput value={fullName} onChangeText={setFullName} placeholder="Ahmet Yılmaz" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} style={[styles.input, isDark ? styles.inputDark : null]} />
+          </View>
+
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>E-POSTA</ThemedText>
+            <TextInput value={email} onChangeText={setEmail} placeholder="ahmet@example.com" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} autoCapitalize="none" style={[styles.input, isDark ? styles.inputDark : null]} />
+          </View>
+
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>PAROLA</ThemedText>
+            <TextInput value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} secureTextEntry style={[styles.input, isDark ? styles.inputDark : null]} />
+          </View>
+
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, isDark ? styles.labelDark : null]}>PAROLA TEKRAR</ThemedText>
+            <TextInput value={passwordRepeat} onChangeText={setPasswordRepeat} placeholder="••••••••" placeholderTextColor={isDark ? '#737B8D' : '#8A8A8A'} secureTextEntry style={[styles.input, isDark ? styles.inputDark : null]} />
+          </View>
+
+          {password.length > 0 && passwordRepeat.length > 0 && password !== passwordRepeat ? (
+            <Text style={styles.errorText}>Parolalar eşleşmiyor</Text>
+          ) : null}
+
+          <Pressable style={styles.submitButton} onPress={onSubmit}>
+            <ThemedText style={styles.submitText}>Kayıt Ol</ThemedText>
+          </Pressable>
+
+          <Pressable style={styles.registerLink} onPress={() => router.push('/auth')}>
+            <ThemedText style={styles.registerText}>Zaten hesabın var mı? Giriş Yap</ThemedText>
           </Pressable>
         </View>
       </View>
-    </ThemedView>
+    </StudioScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  backdrop: {
     flex: 1,
-    paddingHorizontal: 48,
-    paddingVertical: 16,
+    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F2F6FC',
+    backgroundColor: 'rgba(230,230,235,0.42)',
   },
-  contentWrap: {
-    gap: 14,
+  backdropLight: {
+    backgroundColor: 'rgba(235,235,242,0.62)',
   },
-  contentWrapWide: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: 32,
-    maxWidth: 1200,
-    alignSelf: 'center',
-    width: '100%',
+  blurBlockOne: {
+    position: 'absolute',
+    left: 300,
+    top: 86,
+    width: 230,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.28)',
   },
-  visualArea: {
-    flex: 1,
-    minHeight: 430,
-    borderRadius: 24,
-    overflow: 'hidden',
-    position: 'relative',
+  blurBlockTwo: {
+    position: 'absolute',
+    bottom: 92,
+    right: 250,
+    width: 180,
+    height: 42,
+    borderRadius: 22,
+    backgroundColor: 'rgba(160,32,240,0.48)',
+  },
+  modalCard: {
+    width: 448,
+    borderRadius: 48,
+    backgroundColor: '#EEEEF0',
+    paddingHorizontal: 50,
+    paddingTop: 46,
+    paddingBottom: 34,
+    shadowColor: '#000',
+    shadowOpacity: 0.28,
+    shadowRadius: 38,
+    shadowOffset: { width: 0, height: 30 },
+  },
+  modalCardDark: {
+    backgroundColor: '#151318',
     borderWidth: 1,
-    borderColor: '#D7DEE5',
-    padding: 20,
+    borderColor: 'rgba(255,255,255,0.10)',
   },
-  formCard: {
-    flex: 0.85,
-    maxWidth: 380,
-    borderWidth: 1,
-    borderRadius: 24,
-    padding: 20,
+  closeButton: {
+    position: 'absolute',
+    right: 32,
+    top: 32,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'center',
   },
   title: {
-    marginBottom: 8,
+    color: '#000000',
+    fontSize: 30,
+    fontWeight: '900',
     textAlign: 'center',
+  },
+  titleDark: {
+    color: '#FFFFFF',
   },
   subtitle: {
-    marginBottom: 18,
+    color: '#6E788D',
+    fontSize: 16,
+    lineHeight: 23,
     textAlign: 'center',
-    opacity: 0.75,
+    marginTop: 10,
+    marginBottom: 26,
   },
-  floatCard: {
-    position: 'absolute',
-    width: 92,
-    height: 92,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+  subtitleDark: {
+    color: '#9AA5BD',
   },
-  floatTopLeft: {
-    top: 24,
-    left: 24,
+  field: {
+    gap: 7,
+    marginBottom: 15,
   },
-  floatBottomLeft: {
-    left: 38,
-    bottom: 58,
+  label: {
+    color: '#465168',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.4,
   },
-  floatBottomRight: {
-    right: 28,
-    bottom: 30,
-  },
-  outlineSticker: {
-    position: 'absolute',
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
-    width: 170,
-    height: 118,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  outlineLeft: {
-    left: 95,
-    top: 142,
-    transform: [{ rotate: '-14deg' }],
-  },
-  outlineRight: {
-    right: 96,
-    top: 124,
-    transform: [{ rotate: '4deg' }],
-  },
-  heroCard: {
-    position: 'absolute',
-    left: '26%',
-    top: 52,
-    width: 240,
-    height: 290,
-    borderRadius: 30,
-    justifyContent: 'flex-end',
-    padding: 16,
-  },
-  heroText: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  stickerText: {
-    color: '#FFFFFF',
-    fontSize: 22,
-  },
-  visualCaption: {
-    position: 'absolute',
-    left: 20,
-    bottom: 18,
-    fontSize: 13,
-    opacity: 0.8,
+  labelDark: {
+    color: '#8D99B3',
   },
   input: {
+    height: 50,
+    borderRadius: 16,
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 12,
-    backgroundColor: 'rgba(255,255,255,0.75)',
+    borderColor: '#D7D7DB',
+    paddingHorizontal: 20,
+    color: '#111111',
+    fontSize: 16,
   },
-  submitBtn: {
-    marginTop: 8,
+  inputDark: {
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    color: '#FFFFFF',
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  submitButton: {
+    height: 52,
     borderRadius: 14,
+    backgroundColor: '#000000',
     alignItems: 'center',
-    paddingVertical: 13,
+    justifyContent: 'center',
+    marginTop: 8,
+    shadowColor: '#A020F0',
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 16 },
   },
   submitText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '900',
   },
-  linkBtn: {
-    marginTop: 14,
+  registerLink: {
     alignItems: 'center',
+    marginTop: 26,
+  },
+  registerText: {
+    color: '#6E788D',
+    fontWeight: '900',
   },
 });

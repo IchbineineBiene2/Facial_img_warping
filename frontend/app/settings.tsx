@@ -1,430 +1,278 @@
-import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 
-import { SideNav } from '@/components/side-nav';
+import { STUDIO, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { Ionicons } from '@expo/vector-icons';
 
-export default function SettingsScreen() {
-  const router = useRouter();
-  const colorScheme = useColorScheme() ?? 'light';
-  const colors = Colors[colorScheme];
+function Segment<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { label: string; value: T }[];
+  onChange: (value: T) => void;
+}) {
+  const colorScheme = useColorScheme() ?? 'dark';
   const isDark = colorScheme === 'dark';
 
-  const [projectName, setProjectName] = useState('SRS Facial Transformer');
-  const [autoSave, setAutoSave] = useState(true);
-  const [showGuides, setShowGuides] = useState(true);
-  const [minResolution, setMinResolution] = useState<'512' | '768' | '1024'>('512');
-  const [landmarkModel, setLandmarkModel] = useState<'dlib68' | 'mediapipe468'>('mediapipe468');
-  const [showLandmarkOverlay, setShowLandmarkOverlay] = useState(true);
-  const [warpMode, setWarpMode] = useState<'fast' | 'balanced' | 'high'>('balanced');
-  const [agingStrength, setAgingStrength] = useState('35');
-  const [expressionSafetyLock, setExpressionSafetyLock] = useState(true);
-  const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'webp'>('png');
-  const [exportQuality, setExportQuality] = useState('92');
-  const [apiBaseUrl, setApiBaseUrl] = useState('http://localhost:8000');
-  const [backendEnabled, setBackendEnabled] = useState(true);
-  const [statusMessage, setStatusMessage] = useState('Ayarlar kaydedilmeyi bekliyor.');
-
-  const inputTheme = useMemo(
-    () => ({
-      backgroundColor: isDark ? '#1F2428' : '#FFFFFF',
-      borderColor: isDark ? '#32383B' : '#D7E0EA',
-      color: colors.text,
-    }),
-    [colors.text, isDark],
+  return (
+    <View style={[styles.segment, !isDark ? styles.segmentLight : null]}>
+      {options.map((option) => (
+        <Pressable
+          key={option.value}
+          onPress={() => onChange(option.value)}
+          style={[styles.segmentItem, value === option.value ? styles.segmentItemActive : null]}>
+          <ThemedText style={[styles.segmentText, !isDark ? styles.segmentTextLight : null, value === option.value ? styles.segmentTextActive : null]}>
+            {option.label}
+          </ThemedText>
+        </Pressable>
+      ))}
+    </View>
   );
+}
 
-  const resetDefaults = () => {
-    setProjectName('SRS Facial Transformer');
-    setAutoSave(true);
-    setShowGuides(true);
-    setMinResolution('512');
-    setLandmarkModel('mediapipe468');
-    setShowLandmarkOverlay(true);
-    setWarpMode('balanced');
-    setAgingStrength('35');
-    setExpressionSafetyLock(true);
-    setExportFormat('png');
-    setExportQuality('92');
-    setApiBaseUrl('http://localhost:8000');
-    setBackendEnabled(true);
-    setStatusMessage('Varsayılan ayarlar geri yüklendi.');
-  };
-
-  const saveSettings = () => {
-    setStatusMessage('Ayarlar uygulandı. Backend ve modüller bu profile göre çalışacak.');
-  };
+export default function SettingsScreen() {
+  const colorScheme = useColorScheme() ?? 'dark';
+  const isDark = colorScheme === 'dark';
+  const [projectName, setProjectName] = useState('FaceMorph Pro');
+  const [cloudBackup, setCloudBackup] = useState(true);
+  const [showGuides, setShowGuides] = useState(true);
+  const [quality, setQuality] = useState<'fast' | 'fhd' | 'ultra'>('fhd');
+  const [format, setFormat] = useState<'png' | 'jpg' | 'webp'>('webp');
+  const [resolution, setResolution] = useState<'1080p' | '2k' | '4k'>('2k');
 
   return (
-    <ThemedView style={styles.screen}>
-      <SideNav />
-
-      <View style={styles.mainContent}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={28} color={colors.text} />
-        </Pressable>
-        <ThemedText type="title">Ayarlar</ThemedText>
-        <View style={{ width: 28 }} />
-      </View>
-
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: isDark ? '#202426' : '#F3F7FC',
-              borderColor: isDark ? '#32383B' : '#D7E0EA',
-            },
-          ]}>
-          <ThemedText type="subtitle">Genel Proje Ayarları</ThemedText>
-          <ThemedText style={styles.helperText}>SRS akışını yöneten temel proje tercihleri.</ThemedText>
-
-          <View style={styles.fieldGroup}>
-            <ThemedText type="defaultSemiBold">Proje Profili</ThemedText>
-            <TextInput
-              value={projectName}
-              onChangeText={setProjectName}
-              style={[styles.textInput, inputTheme]}
-              placeholder="Profil adı"
-              placeholderTextColor={isDark ? '#98A2A9' : '#7A8791'}
-            />
+    <StudioScreen>
+      <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+        <View style={styles.titleRow}>
+          <View style={styles.titleIcon}>
+            <Ionicons name="settings-outline" size={30} color="#C084FC" />
           </View>
-
-          <View style={styles.switchRow}>
-            <View style={styles.switchText}>
-              <ThemedText type="defaultSemiBold">Otomatik Kayıt</ThemedText>
-              <ThemedText style={styles.helperText}>İşlem adımlarını otomatik kaydet.</ThemedText>
-            </View>
-            <Switch value={autoSave} onValueChange={setAutoSave} trackColor={{ true: colors.tint }} />
-          </View>
-
-          <View style={styles.switchRow}>
-            <View style={styles.switchText}>
-              <ThemedText type="defaultSemiBold">İpucu Katmanı</ThemedText>
-              <ThemedText style={styles.helperText}>Adım adım yönlendirmeleri göster.</ThemedText>
-            </View>
-            <Switch value={showGuides} onValueChange={setShowGuides} trackColor={{ true: colors.tint }} />
+          <View>
+            <ThemedText style={[styles.title, !isDark ? styles.titleLight : null]}>Ayarlar</ThemedText>
+            <ThemedText style={[styles.subtitle, !isDark ? styles.subtitleLight : null]}>Uygulama deneyiminizi kişiselleştirin ve sistem performansını yönetin.</ThemedText>
           </View>
         </View>
 
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: isDark ? '#202426' : '#F3F7FC',
-              borderColor: isDark ? '#32383B' : '#D7E0EA',
-            },
-          ]}>
-          <ThemedText type="subtitle">Ön İşleme ve Landmark</ThemedText>
-          <ThemedText style={styles.helperText}>Girdi doğrulama, çözünürlük ve landmark çıkarımı.</ThemedText>
+        <View style={[styles.sectionBanner, !isDark ? styles.sectionBannerLight : null]}>
+          <ThemedText style={[styles.sectionTitle, !isDark ? styles.sectionTitleLight : null]}>GENEL PROJE AYARLARI</ThemedText>
+          <ThemedText style={[styles.sectionDesc, !isDark ? styles.subtitleLight : null]}>Sistem akışını yöneten temel tercihler.</ThemedText>
+        </View>
 
-          <ThemedText type="defaultSemiBold">Minimum Çözünürlük</ThemedText>
-          <View style={styles.choiceRow}>
-            {(['512', '768', '1024'] as const).map((value) => (
-              <Pressable
-                key={value}
-                onPress={() => setMinResolution(value)}
-                style={[
-                  styles.choicePill,
-                  {
-                    borderColor: value === minResolution ? colors.tint : inputTheme.borderColor,
-                    backgroundColor: value === minResolution ? `${colors.tint}22` : inputTheme.backgroundColor,
-                  },
-                ]}>
-                <ThemedText style={styles.choiceText}>{value}x{value}</ThemedText>
-              </Pressable>
-            ))}
+        <View style={styles.settingsGrid}>
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, !isDark ? styles.labelLight : null]}>UYGULAMA ADI</ThemedText>
+            <TextInput value={projectName} onChangeText={setProjectName} style={[styles.input, !isDark ? styles.inputLight : null]} />
           </View>
 
-          <ThemedText type="defaultSemiBold">Landmark Modeli</ThemedText>
-          <View style={styles.choiceRow}>
-            <Pressable
-              onPress={() => setLandmarkModel('dlib68')}
-              style={[
-                styles.choicePill,
-                {
-                  borderColor: landmarkModel === 'dlib68' ? colors.tint : inputTheme.borderColor,
-                  backgroundColor: landmarkModel === 'dlib68' ? `${colors.tint}22` : inputTheme.backgroundColor,
-                },
-              ]}>
-              <ThemedText style={styles.choiceText}>Dlib 68 Nokta</ThemedText>
-            </Pressable>
-            <Pressable
-              onPress={() => setLandmarkModel('mediapipe468')}
-              style={[
-                styles.choicePill,
-                {
-                  borderColor: landmarkModel === 'mediapipe468' ? colors.tint : inputTheme.borderColor,
-                  backgroundColor: landmarkModel === 'mediapipe468' ? `${colors.tint}22` : inputTheme.backgroundColor,
-                },
-              ]}>
-              <ThemedText style={styles.choiceText}>MediaPipe 468 Nokta</ThemedText>
-            </Pressable>
-          </View>
-
-          <View style={styles.switchRow}>
-            <View style={styles.switchText}>
-              <ThemedText type="defaultSemiBold">Landmark Örtüsünü Göster</ThemedText>
-              <ThemedText style={styles.helperText}>Önizlemede nokta ve bağlantıları çiz.</ThemedText>
-            </View>
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, !isDark ? styles.labelLight : null]}>BULUTA YEDEKLE</ThemedText>
             <Switch
-              value={showLandmarkOverlay}
-              onValueChange={setShowLandmarkOverlay}
-              trackColor={{ true: colors.tint }}
+              value={cloudBackup}
+              onValueChange={setCloudBackup}
+              trackColor={{ false: 'rgba(255,255,255,0.14)', true: STUDIO.accent }}
+              thumbColor="#FFFFFF"
             />
           </View>
-        </View>
 
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: isDark ? '#202426' : '#F3F7FC',
-              borderColor: isDark ? '#32383B' : '#D7E0EA',
-            },
-          ]}>
-          <ThemedText type="subtitle">Dönüşüm ve Çıktı</ThemedText>
-          <ThemedText style={styles.helperText}>Warp, ifade güvenliği, yaşlandırma ve export tercihleri.</ThemedText>
-
-          <ThemedText type="defaultSemiBold">Warp Kalitesi</ThemedText>
-          <View style={styles.choiceRow}>
-            {([
-              { label: 'Hızlı', value: 'fast' },
-              { label: 'Dengeli', value: 'balanced' },
-              { label: 'Yüksek', value: 'high' },
-            ] as const).map((item) => (
-              <Pressable
-                key={item.value}
-                onPress={() => setWarpMode(item.value)}
-                style={[
-                  styles.choicePill,
-                  {
-                    borderColor: warpMode === item.value ? colors.tint : inputTheme.borderColor,
-                    backgroundColor: warpMode === item.value ? `${colors.tint}22` : inputTheme.backgroundColor,
-                  },
-                ]}>
-                <ThemedText style={styles.choiceText}>{item.label}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-
-          <View style={styles.inlineFieldRow}>
-            <View style={styles.inlineField}>
-              <ThemedText type="defaultSemiBold">Yaşlandırma Gücü (0-100)</ThemedText>
-              <TextInput
-                value={agingStrength}
-                onChangeText={setAgingStrength}
-                keyboardType="numeric"
-                style={[styles.textInput, inputTheme]}
-                placeholder="35"
-                placeholderTextColor={isDark ? '#98A2A9' : '#7A8791'}
-              />
-            </View>
-
-            <View style={styles.inlineField}>
-              <ThemedText type="defaultSemiBold">Export Kalitesi (0-100)</ThemedText>
-              <TextInput
-                value={exportQuality}
-                onChangeText={setExportQuality}
-                keyboardType="numeric"
-                style={[styles.textInput, inputTheme]}
-                placeholder="92"
-                placeholderTextColor={isDark ? '#98A2A9' : '#7A8791'}
-              />
-            </View>
-          </View>
-
-          <ThemedText type="defaultSemiBold">Çıktı Formatı</ThemedText>
-          <View style={styles.choiceRow}>
-            {(['png', 'jpg', 'webp'] as const).map((value) => (
-              <Pressable
-                key={value}
-                onPress={() => setExportFormat(value)}
-                style={[
-                  styles.choicePill,
-                  {
-                    borderColor: exportFormat === value ? colors.tint : inputTheme.borderColor,
-                    backgroundColor: exportFormat === value ? `${colors.tint}22` : inputTheme.backgroundColor,
-                  },
-                ]}>
-                <ThemedText style={styles.choiceText}>{value.toUpperCase()}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-
-          <View style={styles.switchRow}>
-            <View style={styles.switchText}>
-              <ThemedText type="defaultSemiBold">İfade Güvenlik Kilidi</ThemedText>
-              <ThemedText style={styles.helperText}>Aşırı deformasyonu sınırla.</ThemedText>
-            </View>
+          <View style={styles.field}>
+            <ThemedText style={[styles.label, !isDark ? styles.labelLight : null]}>GELİŞMİŞ İPUÇLARI</ThemedText>
             <Switch
-              value={expressionSafetyLock}
-              onValueChange={setExpressionSafetyLock}
-              trackColor={{ true: colors.tint }}
+              value={showGuides}
+              onValueChange={setShowGuides}
+              trackColor={{ false: 'rgba(255,255,255,0.14)', true: STUDIO.accent }}
+              thumbColor="#FFFFFF"
             />
           </View>
         </View>
 
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: isDark ? '#202426' : '#F3F7FC',
-              borderColor: isDark ? '#32383B' : '#D7E0EA',
-            },
-          ]}>
-          <ThemedText type="subtitle">Backend ve Servis</ThemedText>
-          <ThemedText style={styles.helperText}>API bağlantısı ve çalışma modu ayarları.</ThemedText>
+        <View style={[styles.sectionBanner, !isDark ? styles.sectionBannerLight : null]}>
+          <ThemedText style={[styles.sectionTitle, !isDark ? styles.sectionTitleLight : null]}>DÖNÜŞÜM PARAMETRELERİ</ThemedText>
+          <ThemedText style={[styles.sectionDesc, !isDark ? styles.subtitleLight : null]}>Warp, kalite ve çıktı formatı ayarları.</ThemedText>
+        </View>
 
-          <View style={styles.switchRow}>
-            <View style={styles.switchText}>
-              <ThemedText type="defaultSemiBold">Backend Entegrasyonu</ThemedText>
-              <ThemedText style={styles.helperText}>Açıkken tüm işlemler API üzerinden çağrılır.</ThemedText>
-            </View>
-            <Switch value={backendEnabled} onValueChange={setBackendEnabled} trackColor={{ true: colors.tint }} />
-          </View>
-
-          <View style={styles.fieldGroup}>
-            <ThemedText type="defaultSemiBold">API Base URL</ThemedText>
-            <TextInput
-              value={apiBaseUrl}
-              onChangeText={setApiBaseUrl}
-              style={[styles.textInput, inputTheme]}
-              placeholder="http://localhost:8000"
-              placeholderTextColor={isDark ? '#98A2A9' : '#7A8791'}
-              autoCapitalize="none"
-              autoCorrect={false}
+        <View style={styles.settingsGrid}>
+          <View style={styles.fieldWide}>
+            <ThemedText style={[styles.label, !isDark ? styles.labelLight : null]}>İŞLEM KALİTESİ</ThemedText>
+            <Segment
+              value={quality}
+              onChange={setQuality}
+              options={[
+                { label: 'HIZLI', value: 'fast' },
+                { label: 'FHD', value: 'fhd' },
+                { label: 'ULTRA', value: 'ultra' },
+              ]}
             />
           </View>
-        </View>
 
-        <View style={styles.actionRow}>
-          <Pressable style={[styles.actionButton, styles.ghostButton, { borderColor: inputTheme.borderColor }]} onPress={resetDefaults}>
-            <ThemedText type="defaultSemiBold">Varsayılanlara Dön</ThemedText>
-          </Pressable>
-          <Pressable style={[styles.actionButton, { backgroundColor: colors.tint }]} onPress={saveSettings}>
-            <ThemedText style={styles.actionPrimaryText}>Ayarları Uygula</ThemedText>
-          </Pressable>
-        </View>
+          <View style={styles.fieldWide}>
+            <ThemedText style={[styles.label, !isDark ? styles.labelLight : null]}>ÇIKTI FORMATI</ThemedText>
+            <Segment
+              value={format}
+              onChange={setFormat}
+              options={[
+                { label: 'PNG', value: 'png' },
+                { label: 'JPG', value: 'jpg' },
+                { label: 'WEBP', value: 'webp' },
+              ]}
+            />
+          </View>
 
-        <View style={styles.statusRow}>
-          <Ionicons name="information-circle-outline" size={18} color={colors.text} />
-          <ThemedText style={styles.statusText}>{statusMessage}</ThemedText>
+          <View style={styles.fieldWide}>
+            <ThemedText style={[styles.label, !isDark ? styles.labelLight : null]}>MAKSİMUM ÇÖZÜNÜRLÜK</ThemedText>
+            <Segment
+              value={resolution}
+              onChange={setResolution}
+              options={[
+                { label: '1080P', value: '1080p' },
+                { label: '2K', value: '2k' },
+                { label: '4K', value: '4k' },
+              ]}
+            />
+          </View>
         </View>
       </ScrollView>
-      </View>
-    </ThemedView>
+    </StudioScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    flexDirection: 'row',
+  page: {
+    paddingHorizontal: 242,
+    paddingTop: 48,
+    paddingBottom: 90,
+    gap: 34,
   },
-  mainContent: {
-    flex: 1,
-  },
-  header: {
-    paddingTop: 56,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 18,
+    marginBottom: 28,
   },
-  content: {
-    paddingHorizontal: 16,
-    paddingBottom: 24,
-    gap: 14,
+  titleIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(168,85,247,0.22)',
   },
-  card: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+  title: {
+    color: STUDIO.text,
+    fontSize: 50,
+    lineHeight: 56,
+    fontWeight: '900',
   },
-  helperText: {
-    opacity: 0.8,
-    lineHeight: 20,
+  titleLight: {
+    color: STUDIO.lightText,
   },
-  fieldGroup: {
+  subtitle: {
+    color: '#7584A3',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  subtitleLight: {
+    color: STUDIO.lightMuted,
+  },
+  sectionBanner: {
+    borderLeftWidth: 4,
+    borderLeftColor: STUDIO.accent,
+    borderRadius: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 24,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     gap: 8,
   },
-  textInput: {
-    height: 44,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    fontSize: 14,
+  sectionBannerLight: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
   },
-  choiceRow: {
+  sectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  sectionTitleLight: {
+    color: STUDIO.lightText,
+  },
+  sectionDesc: {
+    color: '#7584A3',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  settingsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    columnGap: 48,
+    rowGap: 34,
   },
-  choicePill: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  choiceText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  field: {
+    width: '45%',
+    minWidth: 260,
     gap: 12,
   },
-  switchText: {
-    flex: 1,
-    gap: 2,
+  fieldWide: {
+    width: '45%',
+    minWidth: 376,
+    gap: 12,
   },
-  inlineFieldRow: {
+  label: {
+    color: '#52627D',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  labelLight: {
+    color: '#64748B',
+  },
+  input: {
+    height: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    color: '#FFFFFF',
+    paddingHorizontal: 18,
+    fontWeight: '800',
+    backgroundColor: 'rgba(0,0,0,0.12)',
+  },
+  inputLight: {
+    borderColor: STUDIO.lightBorder,
+    color: STUDIO.lightText,
+    backgroundColor: 'rgba(255,255,255,0.84)',
+  },
+  segment: {
+    height: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     flexDirection: 'row',
-    gap: 10,
+    padding: 4,
   },
-  inlineField: {
+  segmentLight: {
+    borderColor: STUDIO.lightBorder,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  segmentItem: {
     flex: 1,
-    gap: 8,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  actionButton: {
-    flex: 1,
-    height: 44,
-    borderRadius: 22,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ghostButton: {
-    borderWidth: 1,
-    backgroundColor: 'transparent',
+  segmentItemActive: {
+    backgroundColor: STUDIO.accent,
   },
-  actionPrimaryText: {
+  segmentText: {
+    color: '#7584A3',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  segmentTextLight: {
+    color: '#64748B',
+  },
+  segmentTextActive: {
     color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    paddingHorizontal: 2,
-    paddingBottom: 8,
-  },
-  statusText: {
-    flex: 1,
-    opacity: 0.9,
   },
 });

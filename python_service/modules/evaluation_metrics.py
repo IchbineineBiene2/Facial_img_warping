@@ -91,7 +91,6 @@ def compute_psnr(original: np.ndarray, transformed: np.ndarray) -> dict:
     else:
         # For normalized images MAX_I = 1.0.
         psnr = float(10.0 * math.log10(1.0 / mse))
->>>>>>> main
 
     return {
         "mse": mse,
