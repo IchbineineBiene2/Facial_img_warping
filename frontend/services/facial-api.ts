@@ -234,6 +234,22 @@ export type ProMetrics = {
 
 export type ProWarpOperation = 'smile_enhancement' | 'brow_lift' | 'lip_plump' | 'slim_face';
 
+export async function exportEvaluationReportFromBase64(
+  format: 'csv' | 'pdf',
+  operation: string,
+  originalImageBase64: string,
+  transformedImageBase64: string,
+  metrics: Pick<ProMetrics, 'mse' | 'psnr' | 'ssim'>
+): Promise<any> {
+  const formData = new FormData();
+  formData.append('format', format);
+  formData.append('operation', operation);
+  formData.append('original_image_b64', originalImageBase64);
+  formData.append('transformed_image_b64', transformedImageBase64);
+  formData.append('metrics_json', JSON.stringify(metrics));
+  return requestJson('/api/report/export', formData);
+}
+
 export async function warpProFromBase64(
   imageBase64: string,
   operation: ProWarpOperation,

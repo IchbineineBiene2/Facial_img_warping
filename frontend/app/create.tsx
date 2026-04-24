@@ -30,8 +30,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
     estimateAgeFromBase64,
     estimateAgeFromUri,
-    exportCsvReportFromBase64,
-    exportPdfReportFromBase64,
+    exportEvaluationReportFromBase64,
     frequencyFromBase64,
     frequencyProFromBase64,
     landmarksFromBase64,
@@ -74,6 +73,12 @@ type ContainLayout = {
 
 type ProOperation = ProWarpOperation | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
+
+type EvalMetricRow = {
+  metric: 'MSE' | 'PSNR' | 'SSIM';
+  value: string;
+  purposeRange: string;
+};
 
 const PRO_OPERATIONS: ProOperation[] = [
   'smile_enhancement',
@@ -205,6 +210,9 @@ export default function CreateScreen() {
   const [proError, setProError] = useState<string | null>(null);
   const [proResultB64, setProResultB64] = useState<string | null>(null);
   const [proMetrics, setProMetrics] = useState<ProMetrics | null>(null);
+  const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
+  const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
+  const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
   const [spectrumBeforeB64, setSpectrumBeforeB64] = useState<string | null>(null);
   const [spectrumAfterB64, setSpectrumAfterB64] = useState<string | null>(null);
   const [ageBefore, setAgeBefore] = useState<number | null>(null);
@@ -217,37 +225,42 @@ export default function CreateScreen() {
   const proCompareOpacity = useRef(new Animated.Value(0)).current;
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
 
-  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
-    const bytes = new Uint8Array(buffer);
-    let output = '';
-    let index = 0;
-
-    while (index < bytes.length) {
-      const byte1 = bytes[index++] ?? 0;
-      const byte2 = bytes[index++];
-      const byte3 = bytes[index++];
-
-      const enc1 = byte1 >> 2;
-      const enc2 = ((byte1 & 0x03) << 4) | ((byte2 ?? 0) >> 4);
-      const enc3 = byte2 == null ? 64 : (((byte2 & 0x0f) << 2) | ((byte3 ?? 0) >> 6));
-      const enc4 = byte3 == null ? 64 : (byte3 & 0x3f);
-
-      output += BASE64_ALPHABET.charAt(enc1);
-      output += BASE64_ALPHABET.charAt(enc2);
-      output += enc3 === 64 ? '=' : BASE64_ALPHABET.charAt(enc3);
-      output += enc4 === 64 ? '=' : BASE64_ALPHABET.charAt(enc4);
+  const metricTableRows = useMemo<EvalMetricRow[]>(() => {
+    if (!evalMetrics) {
+      return [];
     }
 
-    return output;
-  };
+    return [
+      {
+        metric: 'MSE',
+        value: Number.isFinite(evalMetrics.mse) ? evalMetrics.mse.toFixed(6) : 'N/A',
+        purposeRange: 'Pixel-level difference. Lower is better, ideal 0.',
+      },
+      {
+        metric: 'PSNR',
+        value: Number.isFinite(evalMetrics.psnr) ? `${evalMetrics.psnr.toFixed(4)} dB` : 'Infinity',
+        purposeRange: 'Signal quality. Higher is better, generally > 30 dB.',
+      },
+      {
+        metric: 'SSIM',
+        value: Number.isFinite(evalMetrics.ssim) ? evalMetrics.ssim.toFixed(6) : 'N/A',
+        purposeRange: 'Perceptual similarity. Closer to 1 is better, generally >= 0.80.',
+      },
+    ];
+  }, [evalMetrics]);
 
-  const saveDownloadedReport = async (bytes: ArrayBuffer, mimeType: string, filename: string) => {
+  const downloadBase64File = async (fileB64: string, fileName: string, mimeType: string) => {
     if (Platform.OS === 'web') {
+      const binary = globalThis.atob(fileB64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
       const blob = new Blob([bytes], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = filename;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -257,17 +270,11 @@ export default function CreateScreen() {
 
     const dir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
     if (!dir) {
-      throw new Error('Dosya dizini bulunamadı.');
+      throw new Error('Dosya dizini bulunamadi.');
     }
 
-    const uri = `${dir}${filename}`;
-    if (mimeType.includes('text/csv')) {
-      const text = new TextDecoder().decode(bytes);
-      await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
-    } else {
-      await FileSystem.writeAsStringAsync(uri, arrayBufferToBase64(bytes), { encoding: FileSystem.EncodingType.Base64 });
-    }
-
+    const uri = `${dir}${fileName}`;
+    await FileSystem.writeAsStringAsync(uri, fileB64, { encoding: FileSystem.EncodingType.Base64 });
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(uri, { mimeType });
     }
@@ -622,6 +629,9 @@ export default function CreateScreen() {
     setAgingResultB64(null);
     setProResultB64(null);
     setProMetrics(null);
+    setEvalMetrics(null);
+    setEvalSourceLabel(null);
+    setEvalResultB64(null);
     setSpectrumBeforeB64(null);
     setSpectrumAfterB64(null);
     setAgeAfter(null);
@@ -663,6 +673,9 @@ export default function CreateScreen() {
       const data = await warpFromBase64(preprocessedB64, warpOp, warpIntensity);
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
+      setEvalMetrics(data.metrics ?? null);
+      setEvalSourceLabel(`Warp / ${warpOp}`);
+      setEvalResultB64(data.result_image_b64 ?? null);
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (e: any) {
@@ -726,6 +739,9 @@ export default function CreateScreen() {
       const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
+      setEvalMetrics(data.metrics ?? null);
+      setEvalSourceLabel(mode === 'aging' ? 'Frequency / Aging' : 'Frequency / De-Aging');
+      setEvalResultB64(data.result_image_b64 ?? null);
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (e: any) {
@@ -757,6 +773,9 @@ export default function CreateScreen() {
         if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
         setProResultB64(data.result_image_b64);
         setProMetrics(data.metrics ?? null);
+        setEvalMetrics(data.metrics ?? null);
+        setEvalSourceLabel(data.mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
+        setEvalResultB64(data.result_image_b64 ?? null);
         setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
         setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
         setAgeAfter(null);
@@ -771,6 +790,9 @@ export default function CreateScreen() {
         if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
         setProResultB64(data.result_image_b64);
         setProMetrics(data.metrics ?? null);
+        setEvalMetrics(data.metrics ?? null);
+        setEvalSourceLabel(`Pro Warp / ${PRO_LABEL[effectiveOperation]}`);
+        setEvalResultB64(data.result_image_b64 ?? null);
         setSpectrumBeforeB64(null);
         setSpectrumAfterB64(null);
         setAgeAfter(null);
@@ -815,48 +837,48 @@ export default function CreateScreen() {
   }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth]);
 
   const exportCsv = async () => {
-    if (!proResultB64 || !proMetrics) {
-      Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
+    if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
+      Alert.alert('Rapor Hazır Değil', 'Önce bir warp veya frequency işlemi çalıştırmalısın.');
       return;
     }
 
     try {
-      const download = await exportCsvReportFromBase64({
-        originalImageBase64: preprocessedB64,
-        resultImageBase64: proResultB64,
-        operation: PRO_LABEL[proOperation],
-        intensity: proIntensity,
-        ageBefore,
-        ageAfter,
-      });
-      await saveDownloadedReport(download.bytes, download.mimeType, download.filename);
+      const data = await exportEvaluationReportFromBase64(
+        'csv',
+        evalSourceLabel ?? 'Unknown Operation',
+        preprocessedB64,
+        evalResultB64,
+        { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
+      );
+      if (!data.success) throw new Error(data.message ?? 'CSV export failed');
+
+      await downloadBase64File(data.file_b64, data.file_name, data.mime_type ?? 'text/csv');
       setStatusMessage('CSV raporu indirildi.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'CSV raporu alınamadı.';
-      Alert.alert('Export Hatası', message);
+    } catch (error: any) {
+      Alert.alert('Export Hatası', error?.message ?? 'CSV export basarisiz.');
     }
   };
 
   const exportPdf = async () => {
-    if (!proResultB64 || !proMetrics) {
-      Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
+    if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
+      Alert.alert('Rapor Hazır Değil', 'Önce bir warp veya frequency işlemi çalıştırmalısın.');
       return;
     }
 
     try {
-      const download = await exportPdfReportFromBase64({
-        originalImageBase64: preprocessedB64,
-        resultImageBase64: proResultB64,
-        operation: PRO_LABEL[proOperation],
-        intensity: proIntensity,
-        ageBefore,
-        ageAfter,
-      });
-      await saveDownloadedReport(download.bytes, download.mimeType, download.filename);
+      const data = await exportEvaluationReportFromBase64(
+        'pdf',
+        evalSourceLabel ?? 'Unknown Operation',
+        preprocessedB64,
+        evalResultB64,
+        { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
+      );
+      if (!data.success) throw new Error(data.message ?? 'PDF export failed');
+
+      await downloadBase64File(data.file_b64, data.file_name, data.mime_type ?? 'application/pdf');
       setStatusMessage('PDF raporu indirildi.');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'PDF raporu alınamadı.';
-      Alert.alert('Export Hatası', message);
+    } catch (error: any) {
+      Alert.alert('Export Hatası', error?.message ?? 'PDF export basarisiz.');
     }
   };
 
@@ -1384,19 +1406,32 @@ export default function CreateScreen() {
 
             {proResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
-            {proMetrics ? (
+            {evalMetrics ? (
               <View style={styles.metricsCard}>
-                <ThemedText type="defaultSemiBold">Otomatik Kalite Metrikleri</ThemedText>
-                <ThemedText style={styles.helperText}>MSE: {proMetrics.mse.toFixed(4)}</ThemedText>
-                <ThemedText style={styles.helperText}>PSNR: {proMetrics.psnr.toFixed(4)}</ThemedText>
-                <ThemedText style={styles.helperText}>SSIM: {proMetrics.ssim.toFixed(4)}</ThemedText>
-                {proMetrics.hf_lf_ratio_before != null ? (
+                <ThemedText type="defaultSemiBold">Quantitative Evaluation</ThemedText>
+                {evalSourceLabel ? <ThemedText style={styles.helperText}>Source: {evalSourceLabel}</ThemedText> : null}
+
+                <View style={styles.metricTableHeaderRow}>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderMetric]}>Metric</Text>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderValue]}>Value</Text>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderPurpose]}>Purpose/Acceptable Range</Text>
+                </View>
+
+                {metricTableRows.map((row) => (
+                  <View key={row.metric} style={styles.metricTableDataRow}>
+                    <Text style={[styles.metricDataCell, styles.metricDataMetric]}>{row.metric}</Text>
+                    <Text style={[styles.metricDataCell, styles.metricDataValue]}>{row.value}</Text>
+                    <Text style={[styles.metricDataCell, styles.metricDataPurpose]}>{row.purposeRange}</Text>
+                  </View>
+                ))}
+
+                {proMetrics?.hf_lf_ratio_before != null ? (
                   <ThemedText style={styles.helperText}>HF/LF Before: {proMetrics.hf_lf_ratio_before.toFixed(4)}</ThemedText>
                 ) : null}
-                {proMetrics.hf_lf_ratio_after != null ? (
+                {proMetrics?.hf_lf_ratio_after != null ? (
                   <ThemedText style={styles.helperText}>HF/LF After: {proMetrics.hf_lf_ratio_after.toFixed(4)}</ThemedText>
                 ) : null}
-                {proMetrics.hf_lf_ratio_delta != null ? (
+                {proMetrics?.hf_lf_ratio_delta != null ? (
                   <ThemedText style={styles.helperText}>HF/LF Delta: {proMetrics.hf_lf_ratio_delta.toFixed(4)}</ThemedText>
                 ) : null}
               </View>
@@ -1421,15 +1456,15 @@ export default function CreateScreen() {
 
             <View style={styles.agingRow}>
               <Pressable
-                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: proMetrics ? 1 : 0.5 }]}
+                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: evalMetrics ? 1 : 0.5 }]}
                 onPress={exportCsv}
-                disabled={!proMetrics}>
+                disabled={!evalMetrics}>
                 <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>CSV Export</ThemedText>
               </Pressable>
               <Pressable
-                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: proMetrics ? 1 : 0.5 }]}
+                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: evalMetrics ? 1 : 0.5 }]}
                 onPress={exportPdf}
-                disabled={!proMetrics}>
+                disabled={!evalMetrics}>
                 <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>PDF Export</ThemedText>
               </Pressable>
             </View>
@@ -2001,7 +2036,53 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(120,120,120,0.2)',
     backgroundColor: 'rgba(120,120,120,0.08)',
     padding: 10,
-    gap: 2,
+    gap: 8,
+  },
+  metricTableHeaderRow: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.24)',
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+  },
+  metricTableDataRow: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.16)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  metricHeaderCell: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  metricDataCell: {
+    fontSize: 11,
+    opacity: 0.92,
+  },
+  metricHeaderMetric: {
+    flex: 0.9,
+  },
+  metricHeaderValue: {
+    flex: 1.05,
+  },
+  metricHeaderPurpose: {
+    flex: 2.55,
+  },
+  metricDataMetric: {
+    flex: 0.9,
+    fontWeight: '700',
+  },
+  metricDataValue: {
+    flex: 1.05,
+    fontWeight: '600',
+  },
+  metricDataPurpose: {
+    flex: 2.55,
   },
   aiAnalysisCard: {
     borderRadius: 14,
