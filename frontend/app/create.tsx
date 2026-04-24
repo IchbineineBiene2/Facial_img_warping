@@ -3,7 +3,6 @@ import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import * as Print from 'expo-print';
 import { useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,6 +28,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    exportEvaluationReportFromBase64,
     frequencyFromBase64,
     frequencyProFromBase64,
     landmarksFromBase64,
@@ -68,6 +68,12 @@ type ContainLayout = {
 
 type ProOperation = ProWarpOperation | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
+
+type EvalMetricRow = {
+  metric: 'MSE' | 'PSNR' | 'SSIM';
+  value: string;
+  purposeRange: string;
+};
 
 const PRO_OPERATIONS: ProOperation[] = [
   'smile_enhancement',
@@ -189,12 +195,39 @@ export default function CreateScreen() {
   const [proError, setProError] = useState<string | null>(null);
   const [proResultB64, setProResultB64] = useState<string | null>(null);
   const [proMetrics, setProMetrics] = useState<ProMetrics | null>(null);
+  const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
+  const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
+  const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
   const [spectrumBeforeB64, setSpectrumBeforeB64] = useState<string | null>(null);
   const [spectrumAfterB64, setSpectrumAfterB64] = useState<string | null>(null);
   const proDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [proCompareHeld, setProCompareHeld] = useState(false);
   const proCompareOpacity = useRef(new Animated.Value(0)).current;
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+
+  const metricTableRows = useMemo<EvalMetricRow[]>(() => {
+    if (!evalMetrics) {
+      return [];
+    }
+
+    return [
+      {
+        metric: 'MSE',
+        value: Number.isFinite(evalMetrics.mse) ? evalMetrics.mse.toFixed(6) : 'N/A',
+        purposeRange: 'Pixel-level difference. Lower is better, ideal 0.',
+      },
+      {
+        metric: 'PSNR',
+        value: Number.isFinite(evalMetrics.psnr) ? `${evalMetrics.psnr.toFixed(4)} dB` : 'Infinity',
+        purposeRange: 'Signal quality. Higher is better, generally > 30 dB.',
+      },
+      {
+        metric: 'SSIM',
+        value: Number.isFinite(evalMetrics.ssim) ? evalMetrics.ssim.toFixed(6) : 'N/A',
+        purposeRange: 'Perceptual similarity. Closer to 1 is better, generally >= 0.80.',
+      },
+    ];
+  }, [evalMetrics]);
 
   useEffect(() => {
     cropBoxRef.current = cropBox;
@@ -437,6 +470,9 @@ export default function CreateScreen() {
     setAgingResultB64(null);
     setProResultB64(null);
     setProMetrics(null);
+    setEvalMetrics(null);
+    setEvalSourceLabel(null);
+    setEvalResultB64(null);
     setSpectrumBeforeB64(null);
     setSpectrumAfterB64(null);
     setProCompareHeld(false);
@@ -477,6 +513,9 @@ export default function CreateScreen() {
       const data = await warpFromBase64(preprocessedB64, warpOp, warpIntensity);
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
+      setEvalMetrics(data.metrics ?? null);
+      setEvalSourceLabel(`Warp / ${warpOp}`);
+      setEvalResultB64(data.result_image_b64 ?? null);
     } catch (e: any) {
       setWarpError(e?.message ?? 'Unknown error');
     } finally {
@@ -494,6 +533,9 @@ export default function CreateScreen() {
       const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
+      setEvalMetrics(data.metrics ?? null);
+      setEvalSourceLabel(mode === 'aging' ? 'Frequency / Aging' : 'Frequency / De-Aging');
+      setEvalResultB64(data.result_image_b64 ?? null);
     } catch (e: any) {
       setAgingError(e?.message ?? 'Unknown error');
     } finally {
@@ -523,6 +565,9 @@ export default function CreateScreen() {
         if (!data.success) throw new Error(data.message ?? 'Pro frequency failed');
         setProResultB64(data.result_image_b64);
         setProMetrics(data.metrics ?? null);
+        setEvalMetrics(data.metrics ?? null);
+        setEvalSourceLabel(data.mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
+        setEvalResultB64(data.result_image_b64 ?? null);
         setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
         setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
       } else {
@@ -535,6 +580,9 @@ export default function CreateScreen() {
         if (!data.success) throw new Error(data.message ?? 'Pro warp failed');
         setProResultB64(data.result_image_b64);
         setProMetrics(data.metrics ?? null);
+        setEvalMetrics(data.metrics ?? null);
+        setEvalSourceLabel(`Pro Warp / ${PRO_LABEL[effectiveOperation]}`);
+        setEvalResultB64(data.result_image_b64 ?? null);
         setSpectrumBeforeB64(null);
         setSpectrumAfterB64(null);
       }
@@ -576,33 +624,14 @@ export default function CreateScreen() {
     };
   }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth]);
 
-  const buildReportCsv = () => {
-    const metrics = proMetrics;
-    const rows: Array<[string, string]> = [
-      ['operation', PRO_LABEL[proOperation]],
-      ['intensity', proIntensity.toFixed(2)],
-      ['rbf_smooth', proRbfSmooth.toFixed(2)],
-      ['mse', metrics ? String(metrics.mse) : ''],
-      ['psnr', metrics ? String(metrics.psnr) : ''],
-      ['ssim', metrics ? String(metrics.ssim) : ''],
-      ['hf_lf_ratio_before', metrics?.hf_lf_ratio_before != null ? String(metrics.hf_lf_ratio_before) : ''],
-      ['hf_lf_ratio_after', metrics?.hf_lf_ratio_after != null ? String(metrics.hf_lf_ratio_after) : ''],
-      ['hf_lf_ratio_delta', metrics?.hf_lf_ratio_delta != null ? String(metrics.hf_lf_ratio_delta) : ''],
-    ];
-    return rows.map(([k, v]) => `${k},${v}`).join('\n');
-  };
-
-  const exportCsv = async () => {
-    if (!proResultB64 || !proMetrics) {
-      Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
-      return;
-    }
-
-    const csv = buildReportCsv();
-    const fileName = `pro-report-${Date.now()}.csv`;
-
+  const downloadBase64File = async (fileB64: string, fileName: string, mimeType: string) => {
     if (Platform.OS === 'web') {
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const binary = globalThis.atob(fileB64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -611,57 +640,65 @@ export default function CreateScreen() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setStatusMessage('CSV raporu indirildi.');
       return;
     }
 
     const dir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
     if (!dir) {
-      Alert.alert('Export Hatası', 'Dosya dizini bulunamadı.');
+      throw new Error('Dosya dizini bulunamadi.');
+    }
+
+    const uri = `${dir}${fileName}`;
+    await FileSystem.writeAsStringAsync(uri, fileB64, { encoding: FileSystem.EncodingType.Base64 });
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType });
+    }
+  };
+
+  const exportCsv = async () => {
+    if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
+      Alert.alert('Rapor Hazır Değil', 'Önce bir warp veya frequency işlemi çalıştırmalısın.');
       return;
     }
-    const uri = `${dir}${fileName}`;
-    await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { mimeType: 'text/csv' });
+
+    try {
+      const data = await exportEvaluationReportFromBase64(
+        'csv',
+        evalSourceLabel ?? 'Unknown Operation',
+        preprocessedB64,
+        evalResultB64,
+        { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
+      );
+      if (!data.success) throw new Error(data.message ?? 'CSV export failed');
+
+      await downloadBase64File(data.file_b64, data.file_name, data.mime_type ?? 'text/csv');
+      setStatusMessage('CSV raporu indirildi.');
+    } catch (error: any) {
+      Alert.alert('Export Hatası', error?.message ?? 'CSV export basarisiz.');
     }
-    setStatusMessage('CSV raporu paylaşıma hazırlandı.');
   };
 
   const exportPdf = async () => {
-    if (!proResultB64 || !proMetrics) {
-      Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
+    if (!preprocessedB64 || !evalResultB64 || !evalMetrics) {
+      Alert.alert('Rapor Hazır Değil', 'Önce bir warp veya frequency işlemi çalıştırmalısın.');
       return;
     }
 
-    const html = `
-      <html>
-      <body style="font-family: Arial, sans-serif; padding: 24px;">
-        <h2>Facial Pro Report</h2>
-        <p><b>Operation:</b> ${PRO_LABEL[proOperation]}</p>
-        <p><b>Intensity:</b> ${proIntensity.toFixed(2)} | <b>RBF Smooth:</b> ${proRbfSmooth.toFixed(2)}</p>
-        <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; margin-top: 12px;">
-          <tr><th>Metric</th><th>Value</th></tr>
-          <tr><td>MSE</td><td>${proMetrics.mse}</td></tr>
-          <tr><td>PSNR</td><td>${proMetrics.psnr}</td></tr>
-          <tr><td>SSIM</td><td>${proMetrics.ssim}</td></tr>
-          <tr><td>HF/LF Before</td><td>${proMetrics.hf_lf_ratio_before ?? ''}</td></tr>
-          <tr><td>HF/LF After</td><td>${proMetrics.hf_lf_ratio_after ?? ''}</td></tr>
-          <tr><td>HF/LF Delta</td><td>${proMetrics.hf_lf_ratio_delta ?? ''}</td></tr>
-        </table>
-      </body>
-      </html>
-    `;
+    try {
+      const data = await exportEvaluationReportFromBase64(
+        'pdf',
+        evalSourceLabel ?? 'Unknown Operation',
+        preprocessedB64,
+        evalResultB64,
+        { mse: evalMetrics.mse, psnr: evalMetrics.psnr, ssim: evalMetrics.ssim }
+      );
+      if (!data.success) throw new Error(data.message ?? 'PDF export failed');
 
-    const { uri } = await Print.printToFileAsync({ html });
-    if (Platform.OS === 'web') {
-      setStatusMessage('PDF raporu oluşturuldu.');
-      return;
+      await downloadBase64File(data.file_b64, data.file_name, data.mime_type ?? 'application/pdf');
+      setStatusMessage('PDF raporu indirildi.');
+    } catch (error: any) {
+      Alert.alert('Export Hatası', error?.message ?? 'PDF export basarisiz.');
     }
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { mimeType: 'application/pdf' });
-    }
-    setStatusMessage('PDF raporu paylaşıma hazırlandı.');
   };
 
   return (
@@ -1056,19 +1093,32 @@ export default function CreateScreen() {
               </View>
             ) : null}
 
-            {proMetrics ? (
+            {evalMetrics ? (
               <View style={styles.metricsCard}>
-                <ThemedText type="defaultSemiBold">Otomatik Kalite Metrikleri</ThemedText>
-                <ThemedText style={styles.helperText}>MSE: {proMetrics.mse.toFixed(4)}</ThemedText>
-                <ThemedText style={styles.helperText}>PSNR: {proMetrics.psnr.toFixed(4)}</ThemedText>
-                <ThemedText style={styles.helperText}>SSIM: {proMetrics.ssim.toFixed(4)}</ThemedText>
-                {proMetrics.hf_lf_ratio_before != null ? (
+                <ThemedText type="defaultSemiBold">Quantitative Evaluation</ThemedText>
+                {evalSourceLabel ? <ThemedText style={styles.helperText}>Source: {evalSourceLabel}</ThemedText> : null}
+
+                <View style={styles.metricTableHeaderRow}>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderMetric]}>Metric</Text>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderValue]}>Value</Text>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderPurpose]}>Purpose/Acceptable Range</Text>
+                </View>
+
+                {metricTableRows.map((row) => (
+                  <View key={row.metric} style={styles.metricTableDataRow}>
+                    <Text style={[styles.metricDataCell, styles.metricDataMetric]}>{row.metric}</Text>
+                    <Text style={[styles.metricDataCell, styles.metricDataValue]}>{row.value}</Text>
+                    <Text style={[styles.metricDataCell, styles.metricDataPurpose]}>{row.purposeRange}</Text>
+                  </View>
+                ))}
+
+                {proMetrics?.hf_lf_ratio_before != null ? (
                   <ThemedText style={styles.helperText}>HF/LF Before: {proMetrics.hf_lf_ratio_before.toFixed(4)}</ThemedText>
                 ) : null}
-                {proMetrics.hf_lf_ratio_after != null ? (
+                {proMetrics?.hf_lf_ratio_after != null ? (
                   <ThemedText style={styles.helperText}>HF/LF After: {proMetrics.hf_lf_ratio_after.toFixed(4)}</ThemedText>
                 ) : null}
-                {proMetrics.hf_lf_ratio_delta != null ? (
+                {proMetrics?.hf_lf_ratio_delta != null ? (
                   <ThemedText style={styles.helperText}>HF/LF Delta: {proMetrics.hf_lf_ratio_delta.toFixed(4)}</ThemedText>
                 ) : null}
               </View>
@@ -1093,15 +1143,15 @@ export default function CreateScreen() {
 
             <View style={styles.agingRow}>
               <Pressable
-                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: proMetrics ? 1 : 0.5 }]}
+                style={[styles.cvButton, { flex: 1, backgroundColor: Colors[colorScheme].tint, opacity: evalMetrics ? 1 : 0.5 }]}
                 onPress={exportCsv}
-                disabled={!proMetrics}>
+                disabled={!evalMetrics}>
                 <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>CSV Export</ThemedText>
               </Pressable>
               <Pressable
-                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: proMetrics ? 1 : 0.5 }]}
+                style={[styles.cvButton, { flex: 1, backgroundColor: colors.text, opacity: evalMetrics ? 1 : 0.5 }]}
                 onPress={exportPdf}
-                disabled={!proMetrics}>
+                disabled={!evalMetrics}>
                 <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>PDF Export</ThemedText>
               </Pressable>
             </View>
@@ -1664,7 +1714,53 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(120,120,120,0.2)',
     backgroundColor: 'rgba(120,120,120,0.08)',
     padding: 10,
-    gap: 2,
+    gap: 8,
+  },
+  metricTableHeaderRow: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.24)',
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+  },
+  metricTableDataRow: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.16)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  metricHeaderCell: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  metricDataCell: {
+    fontSize: 11,
+    opacity: 0.92,
+  },
+  metricHeaderMetric: {
+    flex: 0.9,
+  },
+  metricHeaderValue: {
+    flex: 1.05,
+  },
+  metricHeaderPurpose: {
+    flex: 2.55,
+  },
+  metricDataMetric: {
+    flex: 0.9,
+    fontWeight: '700',
+  },
+  metricDataValue: {
+    flex: 1.05,
+    fontWeight: '600',
+  },
+  metricDataPurpose: {
+    flex: 2.55,
   },
   lightboxBackdrop: {
     flex: 1,

@@ -2,6 +2,8 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import base64
+import json
 
 from modules.aging import apply_aging, apply_deaging
 from modules.landmark import detect_landmarks, draw_landmarks
@@ -11,6 +13,7 @@ from modules.preprocessing import (
     normalize_face,
     validate_image,
 )
+from modules.evaluation_metrics import evaluate_metrics
 from modules.pro_warping import (
     aging_pro,
     brow_lift_pro,
@@ -20,8 +23,9 @@ from modules.pro_warping import (
     slim_face_pro,
     smile_enhancement_pro,
 )
+from modules.reporting import generate_csv_report, generate_pdf_report
 from modules.warping import raise_eyebrows, simulate_smile, slim_face, widen_lips
-from utils.image_utils import bytes_to_numpy, numpy_to_b64
+from utils.image_utils import b64_to_numpy, bytes_to_numpy, numpy_to_b64
 
 app = FastAPI(title="Facial CV Service")
 
@@ -111,11 +115,13 @@ async def warp(
 
     result_img = ops[operation](img, lms, intensity)
     lms_after = detect_landmarks(result_img) or lms
+    metrics = evaluate_metrics(img, result_img)
 
     return {
         "success": True,
         "operation": operation,
         "result_image_b64": numpy_to_b64(result_img),
+        "metrics": metrics,
         "landmarks_before": [[x, y] for x, y in lms],
         "landmarks_after": [[x, y] for x, y in lms_after],
     }
@@ -191,11 +197,71 @@ async def frequency(
     else:
         return {"success": False, "message": f"Unknown mode '{mode}'. Valid: aging, deaging"}
 
+    metrics = evaluate_metrics(img, result_img)
+
     return {
         "success": True,
         "mode": mode,
         "result_image_b64": numpy_to_b64(result_img),
         "intensity": intensity,
+        "metrics": metrics,
+    }
+
+
+@app.post("/report/export")
+async def report_export(
+    format: str = Form("csv"),
+    operation: str = Form("unknown"),
+    original_image_b64: str = Form(...),
+    transformed_image_b64: str = Form(...),
+    metrics_json: str = Form(...),
+):
+    fmt = (format or "csv").strip().lower()
+    if fmt not in {"csv", "pdf"}:
+        return {"success": False, "message": "Unsupported format. Use csv or pdf."}
+
+    try:
+        metrics = json.loads(metrics_json)
+        core_metrics = {
+            "mse": float(metrics["mse"]),
+            "psnr": float(metrics["psnr"]),
+            "ssim": float(metrics["ssim"]),
+        }
+    except Exception:
+        return {"success": False, "message": "Invalid metrics payload. Expected mse, psnr, ssim."}
+
+    try:
+        original_np = b64_to_numpy(original_image_b64)
+        transformed_np = b64_to_numpy(transformed_image_b64)
+    except Exception as exc:
+        return {"success": False, "message": f"Image decode failed: {exc}"}
+
+    safe_op = "_".join(operation.lower().split()) or "unknown"
+
+    if fmt == "csv":
+        csv_text = generate_csv_report(core_metrics, operation=operation)
+        file_name = f"evaluation-{safe_op}.csv"
+        return {
+            "success": True,
+            "format": "csv",
+            "file_name": file_name,
+            "mime_type": "text/csv",
+            "file_b64": base64.b64encode(csv_text.encode("utf-8")).decode("utf-8"),
+        }
+
+    pdf_bytes = generate_pdf_report(
+        original_image=original_np,
+        transformed_image=transformed_np,
+        metrics=core_metrics,
+        operation=operation,
+    )
+    file_name = f"evaluation-{safe_op}.pdf"
+    return {
+        "success": True,
+        "format": "pdf",
+        "file_name": file_name,
+        "mime_type": "application/pdf",
+        "file_b64": base64.b64encode(pdf_bytes).decode("utf-8"),
     }
 
 
