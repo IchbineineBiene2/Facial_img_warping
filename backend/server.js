@@ -95,6 +95,7 @@ app.post('/api/warp', (req, res) => proxyToPython('/warp', req, res));
 app.post('/api/warp/pro', (req, res) => proxyToPython('/warp/pro', req, res));
 app.post('/api/frequency', (req, res) => proxyToPython('/frequency', req, res));
 app.post('/api/frequency/pro', (req, res) => proxyToPython('/frequency/pro', req, res));
+app.post('/api/report/export', (req, res) => proxyToPython('/report/export', req, res));
 
 app.post('/api/evaluation', (req, res) => {
   const upload = resolveUploadOrFail(res, req.body);
