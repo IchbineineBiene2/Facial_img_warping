@@ -1,220 +1,254 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 
-import { SideNav } from '@/components/side-nav';
+import { STUDIO, StudioCard, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
-import { useAuth } from '@/hooks/use-auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export default function HomeScreen() {
-  const router = useRouter();
-  const { userName } = useAuth();
-  const colorScheme = useColorScheme() ?? 'light';
+function DemoCard({ compact = false }: { compact?: boolean }) {
+  const [processed, setProcessed] = useState(false);
+  const fade = useRef(new Animated.Value(1)).current;
+  const colorScheme = useColorScheme() ?? 'dark';
   const isDark = colorScheme === 'dark';
-  const { width } = useWindowDimensions();
-  const [imageStates, setImageStates] = useState([0, 0, 0]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setImageStates((prev) => prev.map((state) => (state === 0 ? 1 : 0)));
-    }, 2000);
+      Animated.sequence([
+        Animated.timing(fade, { toValue: 0, duration: 360, useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 1, duration: 520, useNativeDriver: true }),
+      ]).start();
+      setProcessed((current) => !current);
+    }, 2600);
     return () => clearInterval(interval);
-  }, []);
-
-  const goProfileOrAuth = () => {
-    if (userName) {
-      router.push('/profile');
-      return;
-    }
-    router.push('/auth');
-  };
-
-  const isWide = width >= 1024;
+  }, [fade]);
 
   return (
-    <ThemedView style={styles.screen}>
-      <SideNav />
+    <StudioCard style={[styles.demoCard, !isDark ? styles.demoCardLight : null, compact ? styles.demoCardCompact : null]}>
+      <View style={styles.demoBadge}>
+        <ThemedText style={[styles.demoBadgeText, !isDark ? styles.darkText : null]}>DEMO SHOWCASE</ThemedText>
+      </View>
+      <Animated.View style={{ opacity: fade }}>
+        <ThemedText style={[styles.demoCenterText, !isDark ? styles.demoCenterTextLight : null]}>
+          {processed ? 'DÖNÜŞTÜRÜLDÜ' : 'ORIJINAL'}
+        </ThemedText>
+      </Animated.View>
+      <View style={styles.demoFooter}>
+        <View>
+          <ThemedText style={[styles.demoTitle, !isDark ? styles.darkText : null]}>Portrait Transformation</ThemedText>
+          <ThemedText style={styles.demoAccent}>AI MORPHED</ThemedText>
+        </View>
+        <Ionicons name="flash-outline" size={16} color="#A855F7" />
+      </View>
+    </StudioCard>
+  );
+}
 
-      <View style={styles.mainContent}>
-        <View style={styles.topBar}>
-          <View style={styles.authActions}>
-            <Pressable onPress={goProfileOrAuth} style={styles.profileIconButton}>
-              <Ionicons name="person-circle-outline" size={28} color={Colors[colorScheme].text} />
+export default function HomeScreen() {
+  const router = useRouter();
+  const { width } = useWindowDimensions();
+  const colorScheme = useColorScheme() ?? 'dark';
+  const isDark = colorScheme === 'dark';
+  const isWide = width >= 980;
+
+  return (
+    <StudioScreen>
+      <View style={[styles.page, isWide ? styles.pageWide : null]}>
+        <View style={styles.heroCopy}>
+          <View style={styles.kicker}>
+            <Ionicons name="flash" size={13} color="#C084FC" />
+            <ThemedText style={styles.kickerText}>PROFESYONEL DONUSUM</ThemedText>
+          </View>
+
+          <ThemedText style={[styles.heroTitle, !isDark ? styles.heroTitleLight : null]}>
+            Kendi tarzınızı{'\n'}
+            <ThemedText style={styles.gradientWord}>yansıtan{'\n'}içerikler</ThemedText>
+            {'\n'}oluşturun.
+          </ThemedText>
+
+          <ThemedText style={[styles.heroDesc, !isDark ? styles.heroDescLight : null]}>
+            Yüz ifadelerini değiştir, yaşını ayarla ve görüntülerini hayal ettiğin şekilde dönüştür.
+            Profesyonel araçlar cebinizde.
+          </ThemedText>
+
+          <View style={styles.heroActions}>
+            <Pressable style={styles.primaryButton} onPress={() => router.push('/create')}>
+              <ThemedText style={styles.primaryButtonText}>Hemen Başla</ThemedText>
             </Pressable>
-            <Pressable onPress={goProfileOrAuth} style={styles.authButton}>
-              <ThemedText type="defaultSemiBold" style={styles.authButtonText}>
-                {userName ? userName : 'Oturum Ac'}
-              </ThemedText>
+            <Pressable style={[styles.secondaryButton, !isDark ? styles.secondaryButtonLight : null]} onPress={() => router.push('/create')}>
+              <ThemedText style={[styles.secondaryButtonText, !isDark ? styles.darkText : null]}>Özellikleri Keşfet</ThemedText>
             </Pressable>
           </View>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContainer}>
-          <View style={[styles.heroSection, isWide && styles.heroSectionWide]}>
-            <View style={styles.heroLeft}>
-              <ThemedText type="title" style={styles.heroTitle}>
-                Kendi tarzınızı yansıtan içerikler oluşturun.
-              </ThemedText>
-              <ThemedText style={styles.heroDesc}>
-                Yüz ifadelerini değiştir, yaşını ayarla ve görüntülerini hayal ettiğin şekilde dönüştür.
-              </ThemedText>
-              <Pressable style={[styles.ctaBtn, { backgroundColor: Colors[colorScheme].tint }]} onPress={() => router.push('/create')}>
-                <ThemedText style={styles.ctaBtnText}>Yaratmaya başlayın</ThemedText>
-              </Pressable>
-            </View>
-
-            {isWide && (
-              <View style={styles.heroRight}>
-                {[0, 1, 2].map((idx) => (
-                  <View key={`comparison-${idx}`} style={styles.imageComparisonCard}>
-                    <View
-                      style={[
-                        styles.imagePlaceholder,
-                        {
-                          backgroundColor: imageStates[idx] === 0
-                            ? isDark ? '#4A5A6A' : '#B8D8FF'
-                            : isDark ? '#6A8A9A' : '#FFD4B8',
-                        },
-                      ]}>
-                      <View style={styles.imageLabelBg}>
-                        <ThemedText style={styles.imageLabel}>
-                          {imageStates[idx] === 0 ? 'Orijinal' : 'İşlenmiş'}
-                        </ThemedText>
-                      </View>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            )}
+        {isWide ? (
+          <View style={styles.demoGrid}>
+            <DemoCard />
+            <DemoCard compact />
           </View>
-        </ScrollView>
+        ) : null}
       </View>
-    </ThemedView>
+    </StudioScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  page: {
     flex: 1,
-    flexDirection: 'row',
+    paddingHorizontal: 36,
+    paddingVertical: 44,
+    justifyContent: 'center',
+    gap: 42,
   },
-  mainContent: {
-    flex: 1,
-    flexDirection: 'column',
-  },
-  topBar: {
-    paddingTop: 56,
-    paddingLeft: 16,
-    paddingRight: 90,
+  pageWide: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     alignItems: 'center',
+    paddingHorizontal: 74,
   },
-  authActions: {
+  heroCopy: {
+    flex: 1,
+    maxWidth: 560,
+    gap: 28,
+  },
+  kicker: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(168,85,247,0.24)',
+    borderWidth: 1,
+    borderColor: 'rgba(168,85,247,0.34)',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  profileIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(120,120,120,0.12)',
-  },
-  authButton: {
-    minWidth: 92,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(120,120,120,0.12)',
-  },
-  authButtonText: {
-    maxWidth: 132,
-  },
-  scrollContainer: {
-    flexGrow: 1,
-    paddingTop: 28,
-  },
-  heroSection: {
-    paddingHorizontal: 56,
-    paddingVertical: 42,
-    gap: 14,
-    alignItems: 'flex-start',
-  },
-  heroSectionWide: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-  },
-  heroLeft: {
-    flex: 1,
-    gap: 12,
-    maxWidth: 460,
-  },
-  heroRight: {
-    flexDirection: 'row',
-    gap: 8,
-    flexShrink: 0,
+  kickerText: {
+    color: '#C084FC',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.4,
   },
   heroTitle: {
-    fontSize: 44,
-    fontWeight: '800',
-    lineHeight: 52,
+    color: STUDIO.text,
+    fontSize: 74,
+    lineHeight: 72,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  heroTitleLight: {
+    color: STUDIO.lightText,
+  },
+  gradientWord: {
+    color: '#DB66E8',
+    fontSize: 74,
+    lineHeight: 72,
+    fontWeight: '900',
   },
   heroDesc: {
-    fontSize: 18,
-    lineHeight: 26,
-    opacity: 0.8,
+    color: '#98A7C5',
+    fontSize: 21,
+    lineHeight: 28,
+    maxWidth: 490,
   },
-  ctaBtn: {
-    marginTop: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 28,
-    alignSelf: 'flex-start',
+  heroDescLight: {
+    color: STUDIO.lightMuted,
   },
-  ctaBtnText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 16,
+  heroActions: {
+    flexDirection: 'row',
+    gap: 16,
+    flexWrap: 'wrap',
+    marginTop: 22,
   },
-  imageComparisonCard: {
-    width: 275,
-    borderRadius: 16,
-    overflow: 'hidden',
-    minHeight: 325,
-  },
-  imageLabel: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  imagePlaceholder: {
-    flex: 1,
+  primaryButton: {
+    minWidth: 170,
+    height: 60,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 325,
-    borderRadius: 16,
+    backgroundColor: '#F0F0F2',
   },
-  imageLabelBg: {
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    paddingVertical: 6,
+  primaryButtonText: {
+    color: '#000000',
+    fontWeight: '900',
+  },
+  secondaryButton: {
+    minWidth: 178,
+    height: 60,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  secondaryButtonLight: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderWidth: 1,
+    borderColor: STUDIO.lightBorder,
+  },
+  secondaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+  },
+  demoGrid: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 24,
+  },
+  demoCard: {
+    width: 265,
+    height: 352,
+    borderRadius: 38,
+    padding: 24,
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(31,31,34,0.88)',
+  },
+  demoCardLight: {
+    backgroundColor: 'rgba(255,255,255,0.82)',
+  },
+  demoCardCompact: {
+    marginTop: 2,
+  },
+  demoBadge: {
+    alignSelf: 'flex-end',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 999,
     paddingHorizontal: 12,
-    borderRadius: 8,
+    paddingVertical: 6,
+  },
+  demoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  darkText: {
+    color: '#111217',
+  },
+  demoCenterText: {
+    color: 'rgba(255,255,255,0.14)',
+    textAlign: 'center',
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  demoCenterTextLight: {
+    color: 'rgba(17,18,23,0.16)',
+  },
+  demoFooter: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  demoTitle: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  demoAccent: {
+    color: '#C084FC',
+    fontSize: 10,
+    fontWeight: '900',
+    marginTop: 8,
   },
 });

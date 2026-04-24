@@ -1,0 +1,50 @@
+env: load .env
+env: export EXPO_PUBLIC_API_URL
+Starting project at C:\Users\ahmet\Documents\GitHub\Facial_img_warping\frontend
+React Compiler enabled
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+Waiting on http://localhost:8082
+Logs for your project will appear below.
+Web node_modules\expo-router\entry.js ▓▓▓▓░░░░░░░░░░░░ 25.0% (106/250)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓▓▓▓░░░░░░░░ 54.0% (462/636)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓▓▓▓░░░░░ 73.8% ( 867/1009)
+λ node_modules\expo-router\node\render.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 88.2% (1008/1075)
+λ Bundled 7128ms node_modules\expo-router\node\render.js (1266 modules)
+Web Bundled 8325ms node_modules\expo-router\entry.js (1259 modules)
+Web node_modules\expo-router\entry.js ▓▓▓▓▓▓▓▓░░░░░░░░ 55.6% (636/853)
+Web Bundled 2587ms node_modules\expo-router\entry.js (1259 modules)
+ LOG  [web] Logs will appear in the browser console
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+λ Bundled 32ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 386ms node_modules\expo-router\entry.js (1 module)
+Unable to resolve "@/components/side-nav" from "app\(tabs)\index.tsx"
+[0m [90m 10 |[39m } [36mfrom[39m [32m'react-native'[39m[33m;[39m
+ [90m 11 |[39m
+[31m[1m>[22m[39m[90m 12 |[39m [36mimport[39m { [33mSideNav[39m } [36mfrom[39m [32m'@/components/side-nav'[39m[33m;[39m
+ [90m    |[39m                          [31m[1m^[22m[39m
+ [90m 13 |[39m [36mimport[39m { [33mThemedText[39m } [36mfrom[39m [32m'@/components/themed-text'[39m[33m;[39m
+ [90m 14 |[39m [36mimport[39m { [33mThemedView[39m } [36mfrom[39m [32m'@/components/themed-view'[39m[33m;[39m
+ [90m 15 |[39m [36mimport[39m { [33mColors[39m } [36mfrom[39m [32m'@/constants/theme'[39m[33m;[39m[0m
+
+Import stack:
+
+ app\(tabs)\index.tsx
+ | import "@/components/side-nav"
+
+ app (require.context)
+
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web Bundled 433ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 635ms node_modules\expo-router\node\render.js (1 module)
+Web node_modules\expo-router\entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)
+Web Bundled 367ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 566ms node_modules\expo-router\node\render.js (1 module)
+λ Bundled 26ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 301ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 22ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 291ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 24ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 289ms node_modules\expo-router\entry.js (1 module)
+λ Bundled 22ms node_modules\expo-router\node\render.js (1 module)
+Web Bundled 282ms node_modules\expo-router\entry.js (1 module)

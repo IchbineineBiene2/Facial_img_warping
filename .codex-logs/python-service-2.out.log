@@ -1,0 +1,147 @@
+[startup] AI dependency warning: missing packages: deepface. Install them before using expression transfer or age estimation.
+INFO:     127.0.0.1:54669 - "GET /api/health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:50616 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50617 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56728 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56728 - "POST /preprocess HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56728 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56728 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56728 - "POST /landmarks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50542 - "POST /warp HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49672 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59637 - "POST /frequency HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59637 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59641 - "POST /frequency HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59641 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:49468 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49468 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: lip_plump with 37 points.
+[WARP] Lip plumping applied with extreme displacement
+INFO:     127.0.0.1:49468 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49468 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:53831 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53831 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:53831 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53831 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:53831 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53831 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:53831 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53831 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:53831 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53831 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:57447 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57447 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:54336 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54336 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:53770 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53770 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:62708 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62708 - "POST /estimate-age HTTP/1.1" 200 OK
+[DEBUG] Moving region: brow_lift with 10 points.
+INFO:     127.0.0.1:54961 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54961 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65381 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61304 - "POST /preprocess HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61304 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61304 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61304 - "POST /landmarks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57359 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52930 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57359 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57359 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51909 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51909 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51254 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52617 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51902 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51902 - "POST /preprocess HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51902 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51902 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51902 - "POST /landmarks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /preprocess HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /preprocess HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59833 - "POST /landmarks HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54109 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54109 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /warp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /frequency HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /frequency HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /frequency HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61633 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64100 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65259 - "POST /report/export HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56001 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56001 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50695 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50695 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63161 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63161 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56348 - "POST /warp/pro HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56348 - "POST /estimate-age HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61578 - "POST /aging/ai HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:61580 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53520 - "POST /aging/ai HTTP/1.1" 404 Not Found

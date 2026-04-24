@@ -10,8 +10,15 @@ from startup_check import warn_missing_ai_dependencies
 
 try:
     from deepface import DeepFace
-except Exception:  # optional dependency; endpoint returns a clear error if unavailable
+except Exception:
     DeepFace = None
+
+try:
+    from insightface.app import FaceAnalysis as _InsightFaceAnalysis
+    _insight_app = _InsightFaceAnalysis(allowed_modules=["detection", "genderage"], providers=["CPUExecutionProvider"])
+    _insight_app.prepare(ctx_id=-1, det_size=(320, 320))
+except Exception:
+    _insight_app = None
 
 from modules.aging import apply_aging, apply_deaging
 from modules.evaluation_metrics import compute_quality_metrics
@@ -41,32 +48,40 @@ from utils.image_utils import b64_to_numpy, bytes_to_numpy, numpy_to_b64
 warn_missing_ai_dependencies()
 
 
-def _estimate_age_from_image(img: np.ndarray) -> int:
-    if DeepFace is None:
-        raise RuntimeError(
-            "DeepFace is not installed. Add it to python_service/requirements.txt or use a lighter age model backend."
-        )
+_AGE_FALLBACK = 30
 
-    try:
-        result = DeepFace.analyze(
-            img_path=img,
-            actions=["age"],
-            detector_backend="opencv",
-            enforce_detection=False,
-            align=False,
-            silent=True,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Face not detected or model error: {exc}") from exc
 
-    if isinstance(result, list):
-        result = result[0] if result else {}
+def _estimate_age_from_image(img: np.ndarray) -> tuple[int, bool]:
+    """Returns (estimated_age, is_estimated). Tries insightface → DeepFace → fallback."""
+    if _insight_app is not None:
+        try:
+            faces = _insight_app.get(img)
+            if faces:
+                age = getattr(faces[0], "age", None)
+                if age is not None:
+                    return int(round(float(age))), True
+        except Exception:
+            pass
 
-    estimated_age = result.get("age") if isinstance(result, dict) else None
-    if estimated_age is None:
-        raise RuntimeError("Age estimation failed for the provided image.")
+    if DeepFace is not None:
+        try:
+            result = DeepFace.analyze(
+                img_path=img,
+                actions=["age"],
+                detector_backend="opencv",
+                enforce_detection=False,
+                align=False,
+                silent=True,
+            )
+            if isinstance(result, list):
+                result = result[0] if result else {}
+            estimated_age = result.get("age") if isinstance(result, dict) else None
+            if estimated_age is not None:
+                return int(round(float(estimated_age))), True
+        except Exception:
+            pass
 
-    return int(round(float(estimated_age)))
+    return _AGE_FALLBACK, False
 
 app = FastAPI(title="Facial CV Service")
 
@@ -121,16 +136,66 @@ async def estimate_age(image: UploadFile = File(...)):
             return {"error": "Face not detected or model error", "details": err}
 
         img = bytes_to_numpy(file_bytes)
-        estimated_age = _estimate_age_from_image(img)
+        estimated_age, age_detected = _estimate_age_from_image(img)
     except Exception as exc:
         return {"error": "Face not detected or model error", "details": str(exc)}
 
     return {
         "success": True,
         "estimated_age": estimated_age,
-        "model": "DeepFace",
-        "message": "Age estimated successfully",
+        "model": "DeepFace" if age_detected else "fallback",
+        "message": "Age estimated successfully" if age_detected else f"DeepFace unavailable; using default age {_AGE_FALLBACK}",
     }
+
+
+@app.post("/aging/ai")
+async def ai_guided_aging(
+    image: UploadFile = File(...),
+    mode: str = Form("aging"),
+    intensity: float = Form(0.6),
+    landmark_backend: str = Form("hybrid"),
+):
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        valid, err = validate_image(file_bytes, image.filename or "upload.jpg")
+        if not valid:
+            return {"error": "Face not detected or model error", "details": err}
+
+        img = bytes_to_numpy(file_bytes)
+        estimated_age, age_detected = _estimate_age_from_image(img)
+        target_delta = 28 if mode == "aging" else -18
+        target_age = max(12, int(round(estimated_age + target_delta * intensity)))
+        age_gap = abs(target_age - estimated_age)
+        guided_intensity = float(np.clip(0.35 + (age_gap / 32.0), 0.35, 1.0))
+
+        lms, landmark_info = detect_landmarks_fused(img, backend=landmark_backend, temporal_smoothing=False)
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
+
+        if mode == "aging":
+            out = aging_pro(img, lms, intensity=guided_intensity)
+        elif mode == "deaging":
+            out = de_aging_pro(img, lms, intensity=guided_intensity)
+        else:
+            return {"success": False, "message": "Unknown mode. Valid: aging, deaging"}
+
+        return {
+            "success": True,
+            "mode": mode,
+            "model": "landmark-guided aging" if not age_detected else "DeepFace-guided aging",
+            "age_detection": "deepface" if age_detected else "fallback",
+            "estimated_age_before": estimated_age,
+            "target_age": target_age,
+            "guided_intensity": guided_intensity,
+            "landmark_info": landmark_info,
+            "result_image_b64": numpy_to_b64(out["result_image"]),
+            "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
+            "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),
+            "metrics": out["metrics"],
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
 
 
 @app.post("/landmarks")

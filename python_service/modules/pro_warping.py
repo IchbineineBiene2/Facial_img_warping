@@ -137,7 +137,7 @@ def _spectrum_vis(mag: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap(norm, cv2.COLORMAP_TURBO)
 
 
-def _hf_lf_energy_ratio(gray: np.ndarray) -> float:
+def _spectral_energy_components(gray: np.ndarray) -> dict:
     h, w = gray.shape
     fshift, _ = _fft_spectrum(gray)
     power = np.abs(fshift) ** 2
@@ -145,9 +145,16 @@ def _hf_lf_energy_ratio(gray: np.ndarray) -> float:
     yy, xx = np.ogrid[:h, :w]
     dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
     r = min(h, w) * 0.18
-    lf = float(np.sum(power[dist <= r]) + 1e-6)
-    hf = float(np.sum(power[dist > r]) + 1e-6)
-    return hf / lf
+    low = float(np.sum(power[dist <= r]))
+    high = float(np.sum(power[dist > r]))
+    total = low + high
+
+    return {
+        "total": total,
+        "low": low,
+        "high": high,
+        "hf_lf_ratio": high / max(low, 1e-6),
+    }
 
 
 def _compute_ssim(gray_a: np.ndarray, gray_b: np.ndarray) -> float:
@@ -179,16 +186,23 @@ def _compute_metrics(original: np.ndarray, processed: np.ndarray) -> dict:
     psnr = float(20.0 * np.log10(255.0 / np.sqrt(max(mse, 1e-9))))
     ssim = _compute_ssim(org_gray, out_gray)
 
-    hf_lf_before = _hf_lf_energy_ratio(org_gray)
-    hf_lf_after = _hf_lf_energy_ratio(out_gray)
+    energy_before = _spectral_energy_components(org_gray)
+    energy_after = _spectral_energy_components(out_gray)
 
     return {
         "mse": mse,
         "psnr": psnr,
         "ssim": ssim,
-        "hf_lf_ratio_before": hf_lf_before,
-        "hf_lf_ratio_after": hf_lf_after,
-        "hf_lf_ratio_delta": hf_lf_after - hf_lf_before,
+        "total_spectral_energy_before": energy_before["total"],
+        "total_spectral_energy_after": energy_after["total"],
+        "total_spectral_energy_delta": energy_after["total"] - energy_before["total"],
+        "low_frequency_energy_before": energy_before["low"],
+        "low_frequency_energy_after": energy_after["low"],
+        "high_frequency_energy_before": energy_before["high"],
+        "high_frequency_energy_after": energy_after["high"],
+        "hf_lf_ratio_before": energy_before["hf_lf_ratio"],
+        "hf_lf_ratio_after": energy_after["hf_lf_ratio"],
+        "hf_lf_ratio_delta": energy_after["hf_lf_ratio"] - energy_before["hf_lf_ratio"],
     }
 
 

@@ -1,9 +1,8 @@
 import Slider from '@react-native-community/slider';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -22,9 +21,8 @@ import {
     useWindowDimensions
 } from 'react-native';
 
-import { SideNav } from '@/components/side-nav';
+import { STUDIO, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
@@ -33,6 +31,7 @@ import {
     exportEvaluationReportFromBase64,
     frequencyFromBase64,
     frequencyProFromBase64,
+    aiGuidedAgingFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
   transferExpressionFromBase64,
@@ -47,6 +46,14 @@ const MIN_WIDTH = 512;
 const MIN_HEIGHT = 512;
 const MIN_CROP_SIZE = 24;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const WEB_NO_SELECT_STYLE: any =
+  Platform.OS === 'web'
+    ? ({
+        touchAction: 'none',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+      } as const)
+    : null;
 
 type ProcessState = 'idle' | 'selected' | 'error';
 type AgeTarget = 'before' | 'after';
@@ -71,13 +78,33 @@ type ContainLayout = {
   offsetY: number;
 };
 
+type ResizeMode = 'left' | 'right' | 'top' | 'bottom' | 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight';
+
 type ProOperation = ProWarpOperation | 'aging' | 'deaging';
 type ProPreset = 'natural' | 'balanced' | 'strong';
 
+type MetricStatus = 'good' | 'warn' | 'bad' | 'neutral';
+
 type EvalMetricRow = {
-  metric: 'MSE' | 'PSNR' | 'SSIM';
+  metric: string;
   value: string;
   purposeRange: string;
+  status: MetricStatus;
+};
+
+const METRIC_STATUS_COLOR: Record<MetricStatus, string> = {
+  good: '#4ADE80',
+  warn: '#FBBF24',
+  bad: '#F87171',
+  neutral: '#CBD5E1',
+};
+
+const formatEnergyValue = (value?: number | null) => {
+  if (value == null || !Number.isFinite(value)) {
+    return 'N/A';
+  }
+
+  return value.toExponential(3);
 };
 
 const PRO_OPERATIONS: ProOperation[] = [
@@ -150,13 +177,13 @@ const clampCropBox = (box: CropBox, stage: StageLayout, imageSize: { width: numb
 };
 
 export default function CreateScreen() {
-  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   // In dark mode tint is #fff — text on tint buttons must be dark to be visible
   const tintTextColor = colorScheme === 'dark' ? '#11181C' : '#FFFFFF';
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const isWide = width >= 960;
+  const cropStageHeight = Math.min(560, Math.max(360, height - 220));
   const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number } | null>(null);
@@ -179,6 +206,7 @@ export default function CreateScreen() {
   const [landmarkError, setLandmarkError] = useState<string | null>(null);
   const [landmarkB64, setLandmarkB64] = useState<string | null>(null);
   const [landmarkCount, setLandmarkCount] = useState<number | null>(null);
+  const [landmarkPoints, setLandmarkPoints] = useState<number[][] | null>(null);
   const [showLandmarks, setShowLandmarks] = useState(false);
 
   const [warpOp, setWarpOp] = useState<'smile' | 'raise_eyebrows' | 'widen_lips' | 'slim_face'>('smile');
@@ -202,6 +230,10 @@ export default function CreateScreen() {
   const [agingError, setAgingError] = useState<string | null>(null);
   const [agingResultB64, setAgingResultB64] = useState<string | null>(null);
   const [agingMode, setAgingMode] = useState<'aging' | 'deaging'>('aging');
+  const [aiAgingLoading, setAiAgingLoading] = useState(false);
+  const [aiAgingError, setAiAgingError] = useState<string | null>(null);
+  const [aiAgingResultB64, setAiAgingResultB64] = useState<string | null>(null);
+  const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; targetAge?: number } | null>(null);
   const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(0.65);
@@ -224,29 +256,71 @@ export default function CreateScreen() {
   const [proCompareHeld, setProCompareHeld] = useState(false);
   const proCompareOpacity = useRef(new Animated.Value(0)).current;
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [lightboxOffset, setLightboxOffset] = useState({ x: 0, y: 0 });
+  const lightboxPanStartRef = useRef({ x: 0, y: 0 });
 
   const metricTableRows = useMemo<EvalMetricRow[]>(() => {
     if (!evalMetrics) {
       return [];
     }
 
-    return [
+    const mse = evalMetrics.mse;
+    const psnr = evalMetrics.psnr;
+    const ssim = evalMetrics.ssim;
+
+    const mseStatus: MetricStatus = !Number.isFinite(mse) ? 'neutral'
+      : mse < 0.01 ? 'good' : mse < 0.05 ? 'warn' : 'bad';
+    const psnrStatus: MetricStatus = !Number.isFinite(psnr) ? 'good'
+      : psnr > 30 ? 'good' : psnr > 25 ? 'warn' : 'bad';
+    const ssimStatus: MetricStatus = !Number.isFinite(ssim) ? 'neutral'
+      : ssim >= 0.8 ? 'good' : ssim >= 0.6 ? 'warn' : 'bad';
+
+    const rows: EvalMetricRow[] = [
       {
         metric: 'MSE',
-        value: Number.isFinite(evalMetrics.mse) ? evalMetrics.mse.toFixed(6) : 'N/A',
-        purposeRange: 'Pixel-level difference. Lower is better, ideal 0.',
+        value: Number.isFinite(mse) ? mse.toFixed(6) : 'N/A',
+        purposeRange: 'Pixel diff. Lower is better, ideal 0.',
+        status: mseStatus,
       },
       {
         metric: 'PSNR',
-        value: Number.isFinite(evalMetrics.psnr) ? `${evalMetrics.psnr.toFixed(4)} dB` : 'Infinity',
-        purposeRange: 'Signal quality. Higher is better, generally > 30 dB.',
+        value: Number.isFinite(psnr) ? `${psnr.toFixed(4)} dB` : 'Infinity',
+        purposeRange: 'Signal quality. Higher is better, > 30 dB.',
+        status: psnrStatus,
       },
       {
         metric: 'SSIM',
-        value: Number.isFinite(evalMetrics.ssim) ? evalMetrics.ssim.toFixed(6) : 'N/A',
-        purposeRange: 'Perceptual similarity. Closer to 1 is better, generally >= 0.80.',
+        value: Number.isFinite(ssim) ? ssim.toFixed(6) : 'N/A',
+        purposeRange: 'Perceptual similarity. Closer to 1, >= 0.80.',
+        status: ssimStatus,
       },
     ];
+
+    if (evalMetrics.total_spectral_energy_before != null || evalMetrics.total_spectral_energy_after != null) {
+      rows.push(
+        {
+          metric: 'Total Energy',
+          value: `${formatEnergyValue(evalMetrics.total_spectral_energy_before)} → ${formatEnergyValue(evalMetrics.total_spectral_energy_after)}`,
+          purposeRange: `Δ ${formatEnergyValue(evalMetrics.total_spectral_energy_delta)}. Freq-domain power.`,
+          status: 'neutral',
+        },
+        {
+          metric: 'LF Energy',
+          value: `${formatEnergyValue(evalMetrics.low_frequency_energy_before)} → ${formatEnergyValue(evalMetrics.low_frequency_energy_after)}`,
+          purposeRange: 'Low-frequency component energy.',
+          status: 'neutral',
+        },
+        {
+          metric: 'HF Energy',
+          value: `${formatEnergyValue(evalMetrics.high_frequency_energy_before)} → ${formatEnergyValue(evalMetrics.high_frequency_energy_after)}`,
+          purposeRange: 'High-frequency component energy.',
+          status: 'neutral',
+        },
+      );
+    }
+
+    return rows;
   }, [evalMetrics]);
 
   const downloadBase64File = async (fileB64: string, fileName: string, mimeType: string) => {
@@ -297,6 +371,13 @@ export default function CreateScreen() {
       useNativeDriver: true,
     }).start();
   }, [proCompareHeld, proCompareOpacity]);
+
+  useEffect(() => {
+    if (!lightboxUri) {
+      setLightboxZoom(1);
+      setLightboxOffset({ x: 0, y: 0 });
+    }
+  }, [lightboxUri]);
 
   const updateCropBox = (nextBox: CropBox | null) => {
     cropBoxRef.current = nextBox;
@@ -387,10 +468,95 @@ export default function CreateScreen() {
     setStatusMessage('Kırpma alanını sürükle ya da köşeden büyüt/küçült.');
   };
 
+  const setCropToAspect = (ratio: number | 'full') => {
+    if (!cropStageLayout || !selectedImageSize) {
+      return;
+    }
+
+    const contain = getContainLayout(cropStageLayout, selectedImageSize);
+    if (ratio === 'full') {
+      updateCropBox({
+        x: contain.offsetX,
+        y: contain.offsetY,
+        width: contain.renderWidth,
+        height: contain.renderHeight,
+      });
+      return;
+    }
+
+    const maxWidth = contain.renderWidth * 0.82;
+    const maxHeight = contain.renderHeight * 0.82;
+    let width = maxWidth;
+    let height = width / ratio;
+
+    if (height > maxHeight) {
+      height = maxHeight;
+      width = height * ratio;
+    }
+
+    updateCropBox({
+      x: contain.offsetX + (contain.renderWidth - width) / 2,
+      y: contain.offsetY + (contain.renderHeight - height) / 2,
+      width,
+      height,
+    });
+  };
+
+  const centerCropBox = () => {
+    if (!cropBox || !cropStageLayout || !selectedImageSize) {
+      return;
+    }
+
+    const contain = getContainLayout(cropStageLayout, selectedImageSize);
+    updateCropBox(
+      clampCropBox(
+        {
+          ...cropBox,
+          x: contain.offsetX + (contain.renderWidth - cropBox.width) / 2,
+          y: contain.offsetY + (contain.renderHeight - cropBox.height) / 2,
+        },
+        cropStageLayout,
+        selectedImageSize,
+      ),
+    );
+  };
+
+  const resetCropSelection = () => {
+    if (cropStageLayout) {
+      ensureCropBox(cropStageLayout);
+    }
+  };
+
+  const downloadTextFile = async (content: string, fileName: string, mimeType: string) => {
+    if (Platform.OS === 'web') {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    const dir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+    if (!dir) {
+      throw new Error('Dosya dizini bulunamadi.');
+    }
+
+    const uri = `${dir}${fileName}`;
+    await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType });
+    }
+  };
+
   const moveCropResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2,
         onPanResponderGrant: () => {
           dragStartRef.current = cropBoxRef.current;
@@ -419,12 +585,14 @@ export default function CreateScreen() {
         onPanResponderTerminate: () => {
           dragStartRef.current = null;
         },
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
       }),
     [cropStageLayout, selectedImageSize]
   );
 
   const createResizeResponder = useMemo(
-    () => (mode: 'x' | 'y' | 'xy') =>
+    () => (mode: ResizeMode) =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
@@ -438,19 +606,39 @@ export default function CreateScreen() {
 
           const contain = getContainLayout(cropStageLayout, selectedImageSize);
           const startBox = resizeStartRef.current;
-          const maxWidth = contain.offsetX + contain.renderWidth - startBox.x;
-          const maxHeight = contain.offsetY + contain.renderHeight - startBox.y;
+          const leftLimit = contain.offsetX;
+          const topLimit = contain.offsetY;
+          const rightLimit = contain.offsetX + contain.renderWidth;
+          const bottomLimit = contain.offsetY + contain.renderHeight;
 
-          const nextWidth =
-            mode === 'y' ? startBox.width : clamp(startBox.width + gestureState.dx, MIN_CROP_SIZE, maxWidth);
-          const nextHeight =
-            mode === 'x' ? startBox.height : clamp(startBox.height + gestureState.dy, MIN_CROP_SIZE, maxHeight);
+          let nextX = startBox.x;
+          let nextY = startBox.y;
+          let nextWidth = startBox.width;
+          let nextHeight = startBox.height;
+
+          if (mode === 'left' || mode === 'topLeft' || mode === 'bottomLeft') {
+            nextX = clamp(startBox.x + gestureState.dx, leftLimit, startBox.x + startBox.width - MIN_CROP_SIZE);
+            nextWidth = startBox.x + startBox.width - nextX;
+          }
+
+          if (mode === 'right' || mode === 'topRight' || mode === 'bottomRight') {
+            nextWidth = clamp(startBox.width + gestureState.dx, MIN_CROP_SIZE, rightLimit - startBox.x);
+          }
+
+          if (mode === 'top' || mode === 'topLeft' || mode === 'topRight') {
+            nextY = clamp(startBox.y + gestureState.dy, topLimit, startBox.y + startBox.height - MIN_CROP_SIZE);
+            nextHeight = startBox.y + startBox.height - nextY;
+          }
+
+          if (mode === 'bottom' || mode === 'bottomLeft' || mode === 'bottomRight') {
+            nextHeight = clamp(startBox.height + gestureState.dy, MIN_CROP_SIZE, bottomLimit - startBox.y);
+          }
 
           updateCropBox(
             clampCropBox(
               {
-                x: startBox.x,
-                y: startBox.y,
+                x: nextX,
+                y: nextY,
                 width: nextWidth,
                 height: nextHeight,
               },
@@ -465,13 +653,53 @@ export default function CreateScreen() {
         onPanResponderTerminate: () => {
           resizeStartRef.current = null;
         },
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
       }),
     [cropStageLayout, selectedImageSize]
   );
 
-  const resizeRightResponder = useMemo(() => createResizeResponder('x'), [createResizeResponder]);
-  const resizeBottomResponder = useMemo(() => createResizeResponder('y'), [createResizeResponder]);
-  const resizeCornerResponder = useMemo(() => createResizeResponder('xy'), [createResizeResponder]);
+  const resizeLeftResponder = useMemo(() => createResizeResponder('left'), [createResizeResponder]);
+  const resizeRightResponder = useMemo(() => createResizeResponder('right'), [createResizeResponder]);
+  const resizeTopResponder = useMemo(() => createResizeResponder('top'), [createResizeResponder]);
+  const resizeBottomResponder = useMemo(() => createResizeResponder('bottom'), [createResizeResponder]);
+  const resizeTopLeftResponder = useMemo(() => createResizeResponder('topLeft'), [createResizeResponder]);
+  const resizeTopRightResponder = useMemo(() => createResizeResponder('topRight'), [createResizeResponder]);
+  const resizeBottomLeftResponder = useMemo(() => createResizeResponder('bottomLeft'), [createResizeResponder]);
+  const resizeBottomRightResponder = useMemo(() => createResizeResponder('bottomRight'), [createResizeResponder]);
+
+  const lightboxPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => lightboxZoom > 1,
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          lightboxZoom > 1 && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
+        onPanResponderGrant: () => {
+          lightboxPanStartRef.current = lightboxOffset;
+        },
+        onPanResponderMove: (_, gestureState) => {
+          if (lightboxZoom <= 1) {
+            return;
+          }
+          const maxOffset = 220 * lightboxZoom;
+          setLightboxOffset({
+            x: clamp(lightboxPanStartRef.current.x + gestureState.dx, -maxOffset, maxOffset),
+            y: clamp(lightboxPanStartRef.current.y + gestureState.dy, -maxOffset, maxOffset),
+          });
+        },
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
+      }),
+    [lightboxOffset, lightboxZoom],
+  );
+
+  const setLightboxZoomLevel = (nextZoom: number) => {
+    const zoom = clamp(nextZoom, 1, 4);
+    setLightboxZoom(zoom);
+    if (zoom === 1) {
+      setLightboxOffset({ x: 0, y: 0 });
+    }
+  };
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -624,9 +852,13 @@ export default function CreateScreen() {
     setPreprocessedB64(null);
     setLandmarkB64(null);
     setLandmarkCount(null);
+    setLandmarkPoints(null);
     setWarpResultB64(null);
     resetExpressionTransferState();
     setAgingResultB64(null);
+    setAiAgingError(null);
+    setAiAgingResultB64(null);
+    setAiAgingInfo(null);
     setProResultB64(null);
     setProMetrics(null);
     setEvalMetrics(null);
@@ -657,11 +889,32 @@ export default function CreateScreen() {
       if (!data.success) throw new Error(data.message ?? 'Landmark detection failed');
       setLandmarkB64(data.landmark_image_b64);
       setLandmarkCount(data.landmark_count);
+      setLandmarkPoints(Array.isArray(data.landmarks) ? data.landmarks : null);
     } catch (e: any) {
       setLandmarkError(e?.message ?? 'Unknown error');
     } finally {
       setLandmarkLoading(false);
     }
+  };
+
+  const exportLandmarks = async (format: 'json' | 'csv') => {
+    if (!landmarkPoints || landmarkPoints.length === 0) {
+      Alert.alert('Landmark Hazir Degil', 'Once yuz noktalarini tespit etmelisin.');
+      return;
+    }
+
+    const baseName = selectedImageName?.replace(/\.[^.]+$/, '') || 'landmarks';
+    const content =
+      format === 'json'
+        ? JSON.stringify({ count: landmarkPoints.length, landmarks: landmarkPoints }, null, 2)
+        : ['index,x,y', ...landmarkPoints.map(([x, y], index) => `${index},${x},${y}`)].join('\n');
+
+    await downloadTextFile(
+      content,
+      `${baseName}-landmarks.${format}`,
+      format === 'json' ? 'application/json;charset=utf-8' : 'text/csv;charset=utf-8',
+    );
+    setStatusMessage(`Landmark koordinatlari ${format.toUpperCase()} olarak indirildi.`);
   };
 
   const handleWarp = async () => {
@@ -735,6 +988,9 @@ export default function CreateScreen() {
     setAgingLoading(true);
     setAgingError(null);
     setAgingResultB64(null);
+    setAiAgingError(null);
+    setAiAgingResultB64(null);
+    setAiAgingInfo(null);
     try {
       const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
@@ -748,6 +1004,55 @@ export default function CreateScreen() {
       setAgingError(e?.message ?? 'Unknown error');
     } finally {
       setAgingLoading(false);
+    }
+  };
+
+  const handleAiAgingComparison = async () => {
+    if (!preprocessedB64) return;
+
+    setAiAgingLoading(true);
+    setAiAgingError(null);
+    setAiAgingResultB64(null);
+    setAiAgingInfo(null);
+    setAgingLoading(true);
+    setAgingError(null);
+
+    try {
+      const [frequencyData, aiData] = await Promise.all([
+        frequencyFromBase64(preprocessedB64, agingMode, agingIntensity),
+        aiGuidedAgingFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend: 'hybrid' }),
+      ]);
+
+      if (!frequencyData.success) {
+        throw new Error(frequencyData.message ?? 'Frequency aging failed');
+      }
+      if (!aiData.success) {
+        throw new Error(aiData.details ?? aiData.message ?? 'AI-guided aging failed');
+      }
+
+      setAgingResultB64(frequencyData.result_image_b64);
+      setAiAgingResultB64(aiData.result_image_b64);
+      setAiAgingInfo({
+        model: aiData.model,
+        estimatedAgeBefore: aiData.estimated_age_before,
+        targetAge: aiData.target_age,
+      });
+      setEvalMetrics(aiData.metrics ?? frequencyData.metrics ?? null);
+      setEvalSourceLabel(`AI Comparison / ${agingMode}`);
+      setEvalResultB64(aiData.result_image_b64 ?? frequencyData.result_image_b64 ?? null);
+      setProMetrics(aiData.metrics ?? null);
+      setSpectrumBeforeB64(aiData.spectrum_before_b64 ?? null);
+      setSpectrumAfterB64(aiData.spectrum_after_b64 ?? null);
+      setAgeAfter(null);
+      void runAgeAnalysis(aiData.result_image_b64, 'after', 'base64');
+      setStatusMessage('AI destekli yaslandirma karsilastirmasi hazir.');
+    } catch (e: any) {
+      const message = e?.message ?? 'AI-guided aging comparison failed';
+      setAiAgingError(message);
+      Alert.alert('AI Aging Hatası', message);
+    } finally {
+      setAgingLoading(false);
+      setAiAgingLoading(false);
     }
   };
 
@@ -882,6 +1187,46 @@ export default function CreateScreen() {
     }
   };
 
+  const clearWorkspace = () => {
+    setSelectedImageName(null);
+    setSelectedImageUri(null);
+    setSelectedImageSize(null);
+    setStatusMessage('Henüz görsel seçilmedi.');
+    setProcessState('idle');
+    setCropApplied(false);
+    setPreprocessLoading(false);
+    setPreprocessError(null);
+    setPreprocessedB64(null);
+    setLandmarkLoading(false);
+    setLandmarkError(null);
+    setLandmarkB64(null);
+    setLandmarkCount(null);
+    setLandmarkPoints(null);
+    setShowLandmarks(false);
+    setWarpLoading(false);
+    setWarpError(null);
+    setWarpResultB64(null);
+    resetExpressionTransferState();
+    setAgingLoading(false);
+    setAgingError(null);
+    setAgingResultB64(null);
+    setAiAgingLoading(false);
+    setAiAgingError(null);
+    setAiAgingResultB64(null);
+    setAiAgingInfo(null);
+    setProLoading(false);
+    setProError(null);
+    setProResultB64(null);
+    setProMetrics(null);
+    setEvalMetrics(null);
+    setEvalSourceLabel(null);
+    setEvalResultB64(null);
+    setSpectrumBeforeB64(null);
+    setSpectrumAfterB64(null);
+    resetAgeAnalysis();
+    closeCropEditor();
+  };
+
   const renderAgeAnalysisCard = () => (
     <View style={styles.aiAnalysisCard}>
       <View style={styles.aiAnalysisHeaderRow}>
@@ -925,7 +1270,7 @@ export default function CreateScreen() {
       <View style={styles.compareHeaderRow}>
         <View style={{ flex: 1 }}>
           <ThemedText type="defaultSemiBold">AI Expression Transfer</ThemedText>
-          <ThemedText style={styles.helperText}>Reference expression -> target face</ThemedText>
+          <ThemedText style={styles.helperText}>{'Reference expression -> target face'}</ThemedText>
         </View>
         <View style={styles.compareHintPill}>
           <ThemedText style={styles.compareHintText}>AI vs Manual Lip Warp</ThemedText>
@@ -957,17 +1302,32 @@ export default function CreateScreen() {
     </View>
   );
 
-  return (
-    <ThemedView style={styles.screen}>
-      <SideNav />
+  const pageBackground = colorScheme === 'dark' ? STUDIO.bg : '#F7F4FB';
+  const panelBackground = colorScheme === 'dark' ? '#121313' : '#FFFFFF';
+  const previewBackground = colorScheme === 'dark' ? '#101112' : '#FFFFFF';
+  const panelBorder = colorScheme === 'dark' ? 'rgba(255,255,255,0.10)' : 'rgba(20,20,20,0.08)';
+  const softSurface = colorScheme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(15,15,15,0.05)';
+  const accent = '#8B5CF6';
+  const mutedText = colorScheme === 'dark' ? '#9CA3AF' : '#64748B';
 
-      <View style={styles.mainContent}>
+  return (
+    <StudioScreen style={{ backgroundColor: pageBackground }}>
+      <View style={[styles.mainContent, { backgroundColor: 'transparent' }]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={28} color={colors.text} />
-        </Pressable>
-        <ThemedText type="title">Oluştur</ThemedText>
-        <View style={{ width: 28 }} />
+        <View style={styles.headerTitleGroup}>
+          <ThemedText type="title" style={styles.headerTitle}>Oluştur</ThemedText>
+          <ThemedText style={[styles.headerSubtitle, { color: mutedText }]}>Yüzünüzü dilediğiniz gibi şekillendirin.</ThemedText>
+        </View>
+        <View style={styles.headerActions}>
+          <Pressable style={[styles.topActionButton, { backgroundColor: softSurface, borderColor: panelBorder }]} onPress={clearWorkspace}>
+            <Ionicons name="trash-outline" size={16} color="#FFFFFF" />
+            <ThemedText style={styles.topActionText}>Temizle</ThemedText>
+          </Pressable>
+          <Pressable style={[styles.topActionButton, styles.topActionPrimary, { opacity: evalMetrics ? 1 : 0.5 }]} onPress={exportPdf} disabled={!evalMetrics}>
+            <Ionicons name="download-outline" size={16} color="#000000" />
+            <ThemedText style={styles.topActionPrimaryText}>Kaydet</ThemedText>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
@@ -977,18 +1337,32 @@ export default function CreateScreen() {
               styles.panel,
               styles.uploadPanel,
               {
-                backgroundColor: colorScheme === 'dark' ? '#202426' : '#F3F7FC',
-                borderColor: colorScheme === 'dark' ? '#32383B' : '#D7E0EA',
+                backgroundColor: panelBackground,
+                borderColor: panelBorder,
               },
             ]}>
-            <ThemedText type="subtitle">Fotoğraf Yükle</ThemedText>
+            <View style={styles.panelTitleRow}>
+              <View style={[styles.panelTitleDot, { backgroundColor: accent }]} />
+              <ThemedText type="subtitle" style={styles.panelTitle}>Görsel Kaynağı</ThemedText>
+            </View>
             <ThemedText style={styles.helperText}>
               Fotoğrafını seçip merkez önizlemede kırpma işlemini yapabilirsin.
             </ThemedText>
 
-            <Pressable style={[styles.uploadButton, { backgroundColor: Colors[colorScheme].tint }]} onPress={pickImage}>
-              <Ionicons name="image-outline" size={18} color={tintTextColor} />
-              <ThemedText style={[styles.uploadButtonText, { color: tintTextColor }]}>Görsel Seç</ThemedText>
+            <Pressable
+              style={[
+                styles.uploadDropzone,
+                {
+                  borderColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.30)',
+                  backgroundColor: colorScheme === 'dark' ? 'rgba(255,255,255,0.035)' : 'rgba(139,92,246,0.045)',
+                },
+              ]}
+              onPress={pickImage}>
+              <View style={[styles.uploadIconBubble, { backgroundColor: colorScheme === 'dark' ? 'rgba(139,92,246,0.16)' : 'rgba(139,92,246,0.12)' }]}>
+                <Ionicons name="image-outline" size={28} color={accent} />
+              </View>
+              <ThemedText style={styles.uploadDropzoneTitle}>Fotoğraf Seç</ThemedText>
+              <ThemedText style={[styles.uploadDropzoneHint, { color: mutedText }]}>Net bir portre yükleyin</ThemedText>
             </Pressable>
 
             <View style={styles.statusRow}>
@@ -1016,11 +1390,19 @@ export default function CreateScreen() {
               styles.panel,
               styles.previewPanel,
               {
-                backgroundColor: colorScheme === 'dark' ? '#181C1E' : '#FFFFFF',
-                borderColor: colorScheme === 'dark' ? '#32383B' : '#D7E0EA',
+                backgroundColor: previewBackground,
+                borderColor: panelBorder,
               },
             ]}>
-            <ThemedText type="subtitle">Orta Önizleme</ThemedText>
+            <View style={styles.canvasHeader}>
+              <View style={styles.panelTitleRow}>
+                <Ionicons name="scan-outline" size={16} color={accent} />
+                <ThemedText type="subtitle" style={styles.panelTitle}>Kanvas</ThemedText>
+              </View>
+              <View style={[styles.liveBadge, { backgroundColor: softSurface }]}>
+                <ThemedText style={styles.liveBadgeText}>Live Preview</ThemedText>
+              </View>
+            </View>
             {selectedImageUri ? (
               <View style={styles.previewBox}>
                 <Image source={{ uri: selectedImageUri }} style={styles.previewImage} contentFit="cover" />
@@ -1039,7 +1421,7 @@ export default function CreateScreen() {
               <Pressable
                 style={[
                   styles.iconActionButton,
-                  { backgroundColor: colorScheme === 'dark' ? '#202426' : '#F3F7FC', borderColor: colors.tint },
+                  { backgroundColor: softSurface, borderColor: colors.tint },
                 ]}
                 onPress={cropImage}
                 disabled={!selectedImageUri}>
@@ -1058,14 +1440,20 @@ export default function CreateScreen() {
               styles.panel,
               styles.featurePanel,
               {
-                backgroundColor: colorScheme === 'dark' ? '#202426' : '#F3F7FC',
-                borderColor: colorScheme === 'dark' ? '#32383B' : '#D7E0EA',
+                backgroundColor: panelBackground,
+                borderColor: panelBorder,
               },
             ]}>
-            <ThemedText type="subtitle">Özellikler</ThemedText>
+            <View style={styles.featureHeader}>
+              <ThemedText type="subtitle" style={styles.panelTitle}>Kontrol Paneli</ThemedText>
+              <ThemedText style={[styles.featureHeaderSub, { color: accent }]}>Gelişmiş Parametreler</ThemedText>
+            </View>
 
             {/* Section 1: Preprocessing */}
-            <ThemedText type="defaultSemiBold">1. Yüz Tespiti</ThemedText>
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>1</Text></View>
+              <ThemedText type="defaultSemiBold">Yüz Tespiti</ThemedText>
+            </View>
             <Pressable
               style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: selectedImageUri ? 1 : 0.5 }]}
               onPress={handlePreprocess}
@@ -1086,7 +1474,11 @@ export default function CreateScreen() {
             ) : null}
 
             {/* Section 2: Landmarks */}
-            <ThemedText type="defaultSemiBold">2. Yüz Noktaları</ThemedText>
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>2</Text></View>
+              <ThemedText type="defaultSemiBold">Yüz Noktaları</ThemedText>
+            </View>
             <Pressable
               style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.4 }]}
               onPress={handleLandmarks}
@@ -1124,9 +1516,27 @@ export default function CreateScreen() {
                 />
               </Pressable>
             ) : null}
+            {landmarkPoints ? (
+              <View style={styles.agingRow}>
+                <Pressable
+                  style={[styles.cvButton, { flex: 1, backgroundColor: softSurface, borderWidth: 1, borderColor: panelBorder }]}
+                  onPress={() => exportLandmarks('json')}>
+                  <ThemedText style={styles.iconActionText}>JSON Export</ThemedText>
+                </Pressable>
+                <Pressable
+                  style={[styles.cvButton, { flex: 1, backgroundColor: softSurface, borderWidth: 1, borderColor: panelBorder }]}
+                  onPress={() => exportLandmarks('csv')}>
+                  <ThemedText style={styles.iconActionText}>CSV Export</ThemedText>
+                </Pressable>
+              </View>
+            ) : null}
 
             {/* Section 3.1: Expression Transfer */}
-            <ThemedText type="defaultSemiBold">3.1 İfade Transferi</ThemedText>
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>3.1</Text></View>
+              <ThemedText type="defaultSemiBold">İfade Transferi</ThemedText>
+            </View>
             <ThemedText style={styles.helperText}>
               Referans ifade görselindeki yüz ifadesini ana görsele aktarıp sonuçta yaş değişimini otomatik ölçer.
             </ThemedText>
@@ -1179,7 +1589,11 @@ export default function CreateScreen() {
             {expressionTransferResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
             {/* Section 3: Expression Warp */}
-            <ThemedText type="defaultSemiBold">3. Yüz Deforme</ThemedText>
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>3</Text></View>
+              <ThemedText type="defaultSemiBold">Yüz Deforme</ThemedText>
+            </View>
             <View style={styles.warpGrid}>
               {(['smile', 'raise_eyebrows', 'widen_lips', 'slim_face'] as const).map((op) => (
                 <Pressable
@@ -1239,7 +1653,11 @@ export default function CreateScreen() {
             {warpResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
             {/* Section 4: Aging Simulation */}
-            <ThemedText type="defaultSemiBold">4. Yaşlandırma / Gençleştirme</ThemedText>
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>4</Text></View>
+              <ThemedText type="defaultSemiBold">Yaşlandırma / Gençleştirme</ThemedText>
+            </View>
             <ThemedText style={styles.helperText}>Yoğunluk: {agingIntensity.toFixed(1)}</ThemedText>
             <View style={styles.sliderRow}>
               <Pressable onPress={() => setAgingIntensity(Math.max(0, +(agingIntensity - 0.1).toFixed(1)))} style={styles.sliderBtn} disabled={!selectedImageUri}>
@@ -1270,7 +1688,16 @@ export default function CreateScreen() {
                   : <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>Gençleştir</ThemedText>}
               </Pressable>
             </View>
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: softSurface, borderWidth: 1, borderColor: panelBorder, opacity: preprocessedB64 ? 1 : 0.4 }]}
+              onPress={handleAiAgingComparison}
+              disabled={!preprocessedB64 || aiAgingLoading || agingLoading}>
+              {aiAgingLoading
+                ? <ActivityIndicator color={colors.text} />
+                : <ThemedText style={styles.iconActionText}>AI Aging ile Karsilastir</ThemedText>}
+            </Pressable>
             {agingError ? <Text style={styles.errorText}>{agingError}</Text> : null}
+            {aiAgingError ? <Text style={styles.errorText}>{aiAgingError}</Text> : null}
             {agingResultB64 && preprocessedB64 ? (
               <View style={styles.sideBySide}>
                 <View style={styles.sideBox}>
@@ -1287,10 +1714,35 @@ export default function CreateScreen() {
                 </View>
               </View>
             ) : null}
+            {agingResultB64 && aiAgingResultB64 ? (
+              <View style={styles.sideBySide}>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Frequency Based</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${agingResultB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${agingResultB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>AI Guided</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${aiAgingResultB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${aiAgingResultB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                  {aiAgingInfo ? (
+                    <ThemedText style={styles.helperText}>
+                      {aiAgingInfo.model ?? 'AI model'}: {aiAgingInfo.estimatedAgeBefore ?? '?'} -&gt; {aiAgingInfo.targetAge ?? '?'}
+                    </ThemedText>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
             {agingResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
             {/* Section 5: Pro Lab */}
-            <ThemedText type="defaultSemiBold">5. Pro Lab (Canlı)</ThemedText>
+            <View style={styles.sectionDivider} />
+            <View style={styles.sectionHeader}>
+              <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>5</Text></View>
+              <ThemedText type="defaultSemiBold">Pro Lab (Canlı)</ThemedText>
+            </View>
             <ThemedText style={styles.helperText}>Operasyon: {PRO_LABEL[proOperation]}</ThemedText>
             <View style={styles.warpGrid}>
               {PRO_OPERATIONS.map((op) => (
@@ -1408,31 +1860,55 @@ export default function CreateScreen() {
 
             {evalMetrics ? (
               <View style={styles.metricsCard}>
-                <ThemedText type="defaultSemiBold">Quantitative Evaluation</ThemedText>
-                {evalSourceLabel ? <ThemedText style={styles.helperText}>Source: {evalSourceLabel}</ThemedText> : null}
+                <View style={styles.metricsCardHeader}>
+                  <ThemedText type="defaultSemiBold" style={styles.metricsCardTitle}>Quantitative Evaluation</ThemedText>
+                  {evalSourceLabel ? (
+                    <View style={styles.metricsSourcePill}>
+                      <Text style={styles.metricsSourceText}>{evalSourceLabel}</Text>
+                    </View>
+                  ) : null}
+                </View>
 
                 <View style={styles.metricTableHeaderRow}>
                   <Text style={[styles.metricHeaderCell, styles.metricHeaderMetric]}>Metric</Text>
                   <Text style={[styles.metricHeaderCell, styles.metricHeaderValue]}>Value</Text>
-                  <Text style={[styles.metricHeaderCell, styles.metricHeaderPurpose]}>Purpose/Acceptable Range</Text>
+                  <Text style={[styles.metricHeaderCell, styles.metricHeaderPurpose]}>Acceptable Range</Text>
                 </View>
 
                 {metricTableRows.map((row) => (
                   <View key={row.metric} style={styles.metricTableDataRow}>
                     <Text style={[styles.metricDataCell, styles.metricDataMetric]}>{row.metric}</Text>
-                    <Text style={[styles.metricDataCell, styles.metricDataValue]}>{row.value}</Text>
+                    <View style={[styles.metricDataCell, styles.metricDataValue, styles.metricValueCell]}>
+                      <View style={[styles.metricStatusDot, { backgroundColor: METRIC_STATUS_COLOR[row.status] }]} />
+                      <Text style={[styles.metricValueText, { color: METRIC_STATUS_COLOR[row.status] }]}>{row.value}</Text>
+                    </View>
                     <Text style={[styles.metricDataCell, styles.metricDataPurpose]}>{row.purposeRange}</Text>
                   </View>
                 ))}
 
                 {proMetrics?.hf_lf_ratio_before != null ? (
-                  <ThemedText style={styles.helperText}>HF/LF Before: {proMetrics.hf_lf_ratio_before.toFixed(4)}</ThemedText>
-                ) : null}
-                {proMetrics?.hf_lf_ratio_after != null ? (
-                  <ThemedText style={styles.helperText}>HF/LF After: {proMetrics.hf_lf_ratio_after.toFixed(4)}</ThemedText>
-                ) : null}
-                {proMetrics?.hf_lf_ratio_delta != null ? (
-                  <ThemedText style={styles.helperText}>HF/LF Delta: {proMetrics.hf_lf_ratio_delta.toFixed(4)}</ThemedText>
+                  <View style={styles.hfLfRow}>
+                    <View style={styles.hfLfStatBox}>
+                      <Text style={styles.hfLfLabel}>Before</Text>
+                      <Text style={styles.hfLfValue}>{proMetrics.hf_lf_ratio_before.toFixed(4)}</Text>
+                    </View>
+                    {proMetrics.hf_lf_ratio_after != null ? (
+                      <View style={styles.hfLfStatBox}>
+                        <Text style={styles.hfLfLabel}>After</Text>
+                        <Text style={styles.hfLfValue}>{proMetrics.hf_lf_ratio_after.toFixed(4)}</Text>
+                      </View>
+                    ) : null}
+                    {proMetrics.hf_lf_ratio_delta != null ? (
+                      <View style={[styles.hfLfStatBox, styles.hfLfDeltaBox]}>
+                        <Text style={styles.hfLfLabel}>HF/LF Delta</Text>
+                        <Text style={[styles.hfLfValue, {
+                          color: proMetrics.hf_lf_ratio_delta < 0 ? '#22C55E' : proMetrics.hf_lf_ratio_delta > 0 ? '#F59E0B' : '#6B7280',
+                        }]}>
+                          {proMetrics.hf_lf_ratio_delta > 0 ? '+' : ''}{proMetrics.hf_lf_ratio_delta.toFixed(4)}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
                 ) : null}
               </View>
             ) : null}
@@ -1474,48 +1950,105 @@ export default function CreateScreen() {
       </View>
 
       <Modal visible={!!lightboxUri} animationType="fade" transparent onRequestClose={() => setLightboxUri(null)}>
-        <Pressable style={styles.lightboxBackdrop} onPress={() => setLightboxUri(null)}>
+        <View style={styles.lightboxBackdrop}>
           {lightboxUri ? (
-            <Image source={{ uri: lightboxUri }} style={styles.lightboxImage} contentFit="contain" />
+            <View style={styles.lightboxViewport} {...lightboxPanResponder.panHandlers}>
+              <Image
+                source={{ uri: lightboxUri }}
+                style={[
+                  styles.lightboxImage,
+                  {
+                    transform: [
+                      { translateX: lightboxOffset.x },
+                      { translateY: lightboxOffset.y },
+                      { scale: lightboxZoom },
+                    ],
+                  },
+                ]}
+                contentFit="contain"
+              />
+            </View>
           ) : null}
+          <View style={styles.lightboxControls}>
+            <Pressable style={styles.lightboxToolButton} onPress={() => setLightboxZoomLevel(lightboxZoom - 0.25)}>
+              <Ionicons name="remove" size={20} color="#fff" />
+            </Pressable>
+            <View style={styles.lightboxZoomPill}>
+              <ThemedText style={styles.lightboxZoomText}>{Math.round(lightboxZoom * 100)}%</ThemedText>
+            </View>
+            <Pressable style={styles.lightboxToolButton} onPress={() => setLightboxZoomLevel(lightboxZoom + 0.25)}>
+              <Ionicons name="add" size={20} color="#fff" />
+            </Pressable>
+            <Pressable
+              style={styles.lightboxToolButton}
+              onPress={() => {
+                setLightboxZoom(1);
+                setLightboxOffset({ x: 0, y: 0 });
+              }}>
+              <Ionicons name="scan-outline" size={18} color="#fff" />
+            </Pressable>
+          </View>
           <Pressable style={styles.lightboxClose} onPress={() => setLightboxUri(null)}>
             <Ionicons name="close" size={24} color="#fff" />
           </Pressable>
-        </Pressable>
+        </View>
       </Modal>
 
       <Modal visible={cropEditorVisible} animationType="slide" transparent onRequestClose={closeCropEditor}>
         <View style={styles.cropModalBackdrop}>
-          <ScrollView
-            style={styles.cropModalScroll}
-            contentContainerStyle={styles.cropModalScrollContent}
-            showsVerticalScrollIndicator={false}
-            bounces={false}>
+          <View style={styles.cropModalScroll}>
             <View
               style={[
                 styles.cropModalCard,
                 {
-                  backgroundColor: colorScheme === 'dark' ? '#181C1E' : '#FFFFFF',
-                  borderColor: colorScheme === 'dark' ? '#32383B' : '#D7E0EA',
+                  backgroundColor: previewBackground,
+                  borderColor: panelBorder,
                 },
               ]}>
               <View style={styles.cropModalHeader}>
                 <Pressable onPress={closeCropEditor} style={styles.cropModalHeaderButton}>
-                  <Ionicons name="close" size={22} color={colors.text} />
+                  <Ionicons name="close" size={22} color="#FFFFFF" />
                 </Pressable>
 
-                <ThemedText type="subtitle">Kırpma Alanı</ThemedText>
+                <View style={styles.cropModalTitleWrap}>
+                  <ThemedText type="subtitle" style={styles.cropModalTitle}>Kırpma Alanı</ThemedText>
+                  <ThemedText style={styles.cropModalSubtitle}>Alanı sürükle, kenar veya köşelerden boyutlandır.</ThemedText>
+                </View>
 
-                <Pressable
-                  onPress={applyCrop}
-                  style={[styles.cropApplyButton, { backgroundColor: Colors[colorScheme].tint }]}
-                  disabled={!cropBox}>
-                  <ThemedText style={styles.cropApplyButtonText}>Uygula</ThemedText>
+                <View style={styles.cropHeaderActions}>
+                  <Pressable onPress={resetCropSelection} style={styles.cropToolbarButton}>
+                    <Ionicons name="refresh" size={16} color="#FFFFFF" />
+                    <ThemedText style={styles.cropToolbarText}>Sıfırla</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    onPress={applyCrop}
+                    style={[styles.cropApplyButton, { opacity: cropBox ? 1 : 0.5 }]}
+                    disabled={!cropBox}>
+                    <ThemedText style={styles.cropApplyButtonText}>Uygula</ThemedText>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View style={styles.cropPresetBar}>
+                <Pressable style={styles.cropPresetButton} onPress={() => setCropToAspect('full')}>
+                  <ThemedText style={styles.cropPresetText}>Tamamı</ThemedText>
+                </Pressable>
+                <Pressable style={styles.cropPresetButton} onPress={() => setCropToAspect(1)}>
+                  <ThemedText style={styles.cropPresetText}>1:1</ThemedText>
+                </Pressable>
+                <Pressable style={styles.cropPresetButton} onPress={() => setCropToAspect(4 / 5)}>
+                  <ThemedText style={styles.cropPresetText}>4:5</ThemedText>
+                </Pressable>
+                <Pressable style={styles.cropPresetButton} onPress={() => setCropToAspect(16 / 9)}>
+                  <ThemedText style={styles.cropPresetText}>16:9</ThemedText>
+                </Pressable>
+                <Pressable style={styles.cropPresetButton} onPress={centerCropBox}>
+                  <ThemedText style={styles.cropPresetText}>Ortala</ThemedText>
                 </Pressable>
               </View>
 
               <View
-                style={styles.cropStage}
+                style={[styles.cropStage, { height: cropStageHeight }, WEB_NO_SELECT_STYLE]}
                 onLayout={(event) => {
                   const { width: stageWidth, height: stageHeight } = event.nativeEvent.layout;
                   const nextLayout = { width: stageWidth, height: stageHeight };
@@ -1524,10 +2057,32 @@ export default function CreateScreen() {
                     updateCropBox(createInitialCropBox(nextLayout, selectedImageSize));
                   }
                 }}>
-                {selectedImageUri ? <Image source={{ uri: selectedImageUri }} style={styles.cropStageImage} contentFit="contain" /> : null}
+                {selectedImageUri ? (
+                  <Image
+                    pointerEvents="none"
+                    source={{ uri: selectedImageUri }}
+                    style={[styles.cropStageImage, WEB_NO_SELECT_STYLE]}
+                    contentFit="contain"
+                  />
+                ) : null}
 
                 {cropBox && cropStageLayout && selectedImageSize ? (
-                  <View style={[StyleSheet.absoluteFill, { pointerEvents: 'box-none' }]}>
+                  <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+                    <View pointerEvents="none" style={[styles.cropShadeOverlay, { left: 0, right: 0, top: 0, height: cropBox.y }]} />
+                    <View pointerEvents="none" style={[styles.cropShadeOverlay, { left: 0, top: cropBox.y, width: cropBox.x, height: cropBox.height }]} />
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.cropShadeOverlay,
+                        {
+                          left: cropBox.x + cropBox.width,
+                          right: 0,
+                          top: cropBox.y,
+                          height: cropBox.height,
+                        },
+                      ]}
+                    />
+                    <View pointerEvents="none" style={[styles.cropShadeOverlay, { left: 0, right: 0, top: cropBox.y + cropBox.height, bottom: 0 }]} />
                     <View
                       style={[
                         styles.cropBoxFrame,
@@ -1537,31 +2092,37 @@ export default function CreateScreen() {
                           width: cropBox.width,
                           height: cropBox.height,
                         },
-                      ]}
-                      {...moveCropResponder.panHandlers}>
-                      <View style={styles.cropBoxShade} />
-                      <View style={styles.cropBoxInnerBorder} />
-                    <View style={styles.cropRightHandle} {...resizeRightResponder.panHandlers} />
-                    <View style={styles.cropBottomHandle} {...resizeBottomResponder.panHandlers} />
-                    <View style={styles.cropCornerHandle} {...resizeCornerResponder.panHandlers} />
+                      ]}>
+                      <View style={[styles.cropMoveSurface, WEB_NO_SELECT_STYLE]} {...moveCropResponder.panHandlers}>
+                        <View pointerEvents="none" style={styles.cropBoxInnerBorder} />
+                        <View pointerEvents="none" style={[styles.cropGridLine, styles.cropGridVerticalOne]} />
+                        <View pointerEvents="none" style={[styles.cropGridLine, styles.cropGridVerticalTwo]} />
+                        <View pointerEvents="none" style={[styles.cropGridLine, styles.cropGridHorizontalOne]} />
+                        <View pointerEvents="none" style={[styles.cropGridLine, styles.cropGridHorizontalTwo]} />
+                      </View>
+
+                      <View style={[styles.cropEdgeHandle, styles.cropTopHandle, WEB_NO_SELECT_STYLE]} {...resizeTopResponder.panHandlers} />
+                      <View style={[styles.cropEdgeHandle, styles.cropRightHandle, WEB_NO_SELECT_STYLE]} {...resizeRightResponder.panHandlers} />
+                      <View style={[styles.cropEdgeHandle, styles.cropBottomHandle, WEB_NO_SELECT_STYLE]} {...resizeBottomResponder.panHandlers} />
+                      <View style={[styles.cropEdgeHandle, styles.cropLeftHandle, WEB_NO_SELECT_STYLE]} {...resizeLeftResponder.panHandlers} />
+
+                      <View style={[styles.cropCornerHandle, styles.cropTopLeftHandle, WEB_NO_SELECT_STYLE]} {...resizeTopLeftResponder.panHandlers} />
+                      <View style={[styles.cropCornerHandle, styles.cropTopRightHandle, WEB_NO_SELECT_STYLE]} {...resizeTopRightResponder.panHandlers} />
+                      <View style={[styles.cropCornerHandle, styles.cropBottomLeftHandle, WEB_NO_SELECT_STYLE]} {...resizeBottomLeftResponder.panHandlers} />
+                      <View style={[styles.cropCornerHandle, styles.cropBottomRightHandle, WEB_NO_SELECT_STYLE]} {...resizeBottomRightResponder.panHandlers} />
                     </View>
                   </View>
                 ) : null}
               </View>
 
               <View style={styles.cropModalFooter}>
-                <ThemedText style={styles.helperText}>
-                  Alanı sürükleyerek konumlandırabilir, sağ tutamactan genişliği, alt tutamactan yüksekliği değiştirebilirsin.
-                </ThemedText>
-                <ThemedText style={styles.helperText}>
-                  Köşe tutamaci ile her iki boyutu birden ayarlayabilirsin; alan kare olmak zorunda degil.
-                </ThemedText>
+                <ThemedText style={styles.cropFooterText}>İpucu: Kutunun içinden sürükleyerek taşıyabilir, kenarlardan yalnızca tek ekseni, köşelerden iki ekseni birlikte değiştirebilirsin.</ThemedText>
               </View>
             </View>
-          </ScrollView>
+          </View>
         </View>
       </Modal>
-    </ThemedView>
+    </StudioScreen>
   );
 }
 
@@ -1573,25 +2134,77 @@ const styles = StyleSheet.create({
   mainContent: {
     flex: 1,
   },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
   header: {
-    paddingTop: 56,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingTop: 54,
+    paddingHorizontal: 28,
+    paddingBottom: 22,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 16,
+  },
+  headerTitleGroup: {
+    flex: 1,
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  headerTitle: {
+    fontSize: 34,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  headerSubtitle: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  topActionButton: {
+    minHeight: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  topActionPrimary: {
+    backgroundColor: '#F0F0F2',
+    borderColor: '#F0F0F2',
+  },
+  topActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  topActionPrimaryText: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '900',
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 16,
-    paddingBottom: 24,
-    paddingTop: 8,
+    paddingHorizontal: 28,
+    paddingBottom: 48,
+    paddingTop: 0,
   },
   workspace: {
-    gap: 14,
+    gap: 18,
     width: '100%',
     alignSelf: 'center',
-    maxWidth: 1240,
+    maxWidth: 1440,
   },
   workspaceWide: {
     flexDirection: 'row',
@@ -1600,31 +2213,74 @@ const styles = StyleSheet.create({
   },
   panel: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+    borderRadius: 28,
+    padding: 18,
+    gap: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 18 },
   },
   uploadPanel: {
-    flex: 1,
-    minWidth: 240,
+    flex: 0.92,
+    minWidth: 280,
   },
   previewPanel: {
-    flex: 1.3,
-    minWidth: 320,
+    flex: 1.22,
+    minWidth: 360,
     alignItems: 'center',
   },
   featurePanel: {
-    flex: 1,
-    minWidth: 240,
+    flex: 1.04,
+    minWidth: 300,
+  },
+  panelTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  panelTitleDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  panelTitle: {
+    fontWeight: '900',
+    letterSpacing: 0,
   },
   helperText: {
-    opacity: 0.8,
+    opacity: 0.72,
     lineHeight: 21,
+  },
+  uploadDropzone: {
+    minHeight: 176,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    padding: 18,
+  },
+  uploadIconBubble: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadDropzoneTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  uploadDropzoneHint: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   uploadButton: {
     height: 44,
     borderRadius: 22,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
@@ -1646,18 +2302,18 @@ const styles = StyleSheet.create({
   },
   fileCard: {
     borderRadius: 14,
-    padding: 12,
+    padding: 14,
     backgroundColor: 'rgba(120,120,120,0.08)',
-    gap: 4,
+    gap: 6,
   },
   fileText: {
     opacity: 0.8,
   },
   previewBox: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 520,
     aspectRatio: 1,
-    borderRadius: 16,
+    borderRadius: 24,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(120,120,120,0.18)',
@@ -1672,10 +2328,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 12,
     top: 12,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    backgroundColor: 'rgba(80,82,84,0.72)',
+    borderRadius: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
   },
   previewBadgeText: {
     color: '#FFFFFF',
@@ -1684,9 +2340,9 @@ const styles = StyleSheet.create({
   },
   emptyPreview: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 520,
     aspectRatio: 1,
-    borderRadius: 16,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(120,120,120,0.18)',
     alignItems: 'center',
@@ -1700,11 +2356,28 @@ const styles = StyleSheet.create({
     gap: 10,
     width: '100%',
   },
+  canvasHeader: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  liveBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  liveBadgeText: {
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   iconActionButton: {
     minHeight: 40,
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -1735,23 +2408,63 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 16,
   },
+  featureHeader: {
+    marginHorizontal: -18,
+    marginTop: -18,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.07)',
+    backgroundColor: 'rgba(139,92,246,0.10)',
+    gap: 3,
+  },
+  featureHeaderSub: {
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    marginTop: 6,
+  },
+  stepBadge: {
+    minWidth: 30,
+    height: 30,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+  },
   cropModalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(0,0,0,0.72)',
   },
   cropModalScroll: {
-    flex: 1,
-  },
-  cropModalScrollContent: {
-    padding: 16,
-    minHeight: '100%',
+    width: '100%',
+    alignItems: 'center',
     justifyContent: 'center',
   },
   cropModalCard: {
     width: '100%',
-    maxWidth: 760,
+    maxWidth: 980,
     borderWidth: 1,
-    borderRadius: 24,
+    borderRadius: 28,
     overflow: 'hidden',
     alignSelf: 'center',
     maxHeight: '96%',
@@ -1761,102 +2474,241 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(120,120,120,0.18)',
+    borderBottomColor: 'rgba(255,255,255,0.10)',
   },
   cropModalHeaderButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(120,120,120,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  cropModalTitleWrap: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 2,
+  },
+  cropModalTitle: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+  },
+  cropModalSubtitle: {
+    color: 'rgba(255,255,255,0.58)',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  cropHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cropToolbarButton: {
+    height: 38,
+    borderRadius: 19,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  cropToolbarText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
   cropApplyButton: {
-    minWidth: 88,
-    height: 36,
-    borderRadius: 18,
+    minWidth: 104,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 18,
+    backgroundColor: '#A020F0',
   },
   cropApplyButtonText: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '900',
     fontSize: 13,
+  },
+  cropPresetBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  cropPresetButton: {
+    height: 34,
+    borderRadius: 17,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  cropPresetText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
   cropStage: {
     width: '100%',
-    aspectRatio: 1,
-    backgroundColor: '#101214',
+    height: 560,
+    maxHeight: 560,
+    backgroundColor: '#0B0D0F',
     position: 'relative',
+    overflow: 'hidden',
   },
   cropStageImage: {
     ...StyleSheet.absoluteFillObject,
   },
+  cropShadeOverlay: {
+    position: 'absolute',
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
   cropBoxFrame: {
     position: 'absolute',
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: Colors.light.tint,
-    backgroundColor: 'rgba(122, 162, 255, 0.08)',
-  },
-  cropBoxShade: {
-    ...StyleSheet.absoluteFillObject,
     borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#28D4FF',
+    backgroundColor: 'transparent',
+    zIndex: 2,
+  },
+  cropMoveSurface: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 14,
+    zIndex: 1,
   },
   cropBoxInnerBorder: {
     ...StyleSheet.absoluteFillObject,
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.8)',
+    borderColor: 'rgba(255,255,255,0.9)',
+  },
+  cropGridLine: {
+    position: 'absolute',
+    backgroundColor: 'rgba(255,255,255,0.44)',
+  },
+  cropGridVerticalOne: {
+    left: '33.333%',
+    top: 0,
+    bottom: 0,
+    width: 1,
+  },
+  cropGridVerticalTwo: {
+    left: '66.666%',
+    top: 0,
+    bottom: 0,
+    width: 1,
+  },
+  cropGridHorizontalOne: {
+    top: '33.333%',
+    left: 0,
+    right: 0,
+    height: 1,
+  },
+  cropGridHorizontalTwo: {
+    top: '66.666%',
+    left: 0,
+    right: 0,
+    height: 1,
+  },
+  cropEdgeHandle: {
+    position: 'absolute',
+    backgroundColor: '#0891B2',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    zIndex: 4,
+  },
+  cropTopHandle: {
+    top: -13,
+    left: '50%',
+    width: 96,
+    height: 26,
+    marginLeft: -48,
+    borderRadius: 13,
+  },
+  cropRightHandle: {
+    right: -13,
+    top: '50%',
+    width: 26,
+    height: 96,
+    marginTop: -48,
+    borderRadius: 13,
+  },
+  cropBottomHandle: {
+    bottom: -13,
+    left: '50%',
+    width: 96,
+    height: 26,
+    marginLeft: -48,
+    borderRadius: 13,
+  },
+  cropLeftHandle: {
+    left: -13,
+    top: '50%',
+    width: 26,
+    height: 96,
+    marginTop: -48,
+    borderRadius: 13,
   },
   cropCornerHandle: {
     position: 'absolute',
-    right: -6,
-    bottom: -6,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderWidth: 2,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 3,
     borderColor: '#FFFFFF',
-    backgroundColor: Colors.light.tint,
+    backgroundColor: '#0891B2',
+    zIndex: 5,
   },
-  cropRightHandle: {
-    position: 'absolute',
-    right: -8,
-    top: '28%',
-    width: 24,
-    height: 74,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    backgroundColor: Colors.light.tint,
+  cropTopLeftHandle: {
+    left: -21,
+    top: -21,
   },
-  cropBottomHandle: {
-    position: 'absolute',
-    left: '28%',
-    bottom: -8,
-    width: 74,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    backgroundColor: Colors.light.tint,
+  cropTopRightHandle: {
+    right: -21,
+    top: -21,
+  },
+  cropBottomLeftHandle: {
+    left: -21,
+    bottom: -21,
+  },
+  cropBottomRightHandle: {
+    right: -21,
+    bottom: -21,
   },
   cropModalFooter: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 14,
-    gap: 6,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  cropFooterText: {
+    color: 'rgba(255,255,255,0.70)',
+    fontSize: 13,
+    lineHeight: 18,
   },
   cvButton: {
-    height: 42,
-    borderRadius: 21,
+    height: 46,
+    borderRadius: 23,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
   },
   cvButtonText: {
     color: '#fff',
@@ -1871,7 +2723,7 @@ const styles = StyleSheet.create({
   resultImage: {
     width: '100%',
     height: 160,
-    borderRadius: 12,
+    borderRadius: 10,
     backgroundColor: 'rgba(120,120,120,0.1)',
   },
   landmarkRow: {
@@ -1887,8 +2739,8 @@ const styles = StyleSheet.create({
   warpOpButton: {
     flex: 1,
     minWidth: '40%',
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingVertical: 11,
+    borderRadius: 12,
     alignItems: 'center',
   },
   warpOpText: {
@@ -1913,9 +2765,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sliderBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: 'rgba(120,120,120,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2031,58 +2883,125 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   metricsCard: {
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(120,120,120,0.2)',
-    backgroundColor: 'rgba(120,120,120,0.08)',
-    padding: 10,
+    borderColor: 'rgba(120,120,120,0.18)',
+    backgroundColor: 'rgba(120,120,120,0.06)',
+    padding: 14,
+    gap: 10,
+  },
+  metricsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 8,
+  },
+  metricsCardTitle: {
+    fontSize: 14,
+  },
+  metricsSourcePill: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(120,120,120,0.16)',
+  },
+  metricsSourceText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#CBD5E1',
   },
   metricTableHeaderRow: {
     flexDirection: 'row',
     borderWidth: 1,
-    borderColor: 'rgba(120,120,120,0.24)',
-    backgroundColor: 'rgba(0,0,0,0.08)',
+    borderColor: 'rgba(120,120,120,0.22)',
+    backgroundColor: 'rgba(0,0,0,0.10)',
     borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
   },
   metricTableDataRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(120,120,120,0.16)',
+    borderColor: 'rgba(120,120,120,0.13)',
     borderRadius: 8,
     paddingVertical: 8,
-    paddingHorizontal: 6,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)',
   },
   metricHeaderCell: {
     fontSize: 11,
     fontWeight: '700',
+    color: '#CBD5E1',
   },
   metricDataCell: {
     fontSize: 11,
-    opacity: 0.92,
+    color: '#E2E8F0',
   },
   metricHeaderMetric: {
-    flex: 0.9,
+    flex: 0.85,
   },
   metricHeaderValue: {
-    flex: 1.05,
+    flex: 1.1,
   },
   metricHeaderPurpose: {
     flex: 2.55,
   },
   metricDataMetric: {
-    flex: 0.9,
+    flex: 0.85,
     fontWeight: '700',
   },
   metricDataValue: {
-    flex: 1.05,
-    fontWeight: '600',
+    flex: 1.1,
+  },
+  metricValueCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  metricStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  metricValueText: {
+    fontSize: 11,
+    fontWeight: '700',
   },
   metricDataPurpose: {
     flex: 2.55,
+    opacity: 0.85,
+    fontSize: 10.5,
+  },
+  hfLfRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 2,
+  },
+  hfLfStatBox: {
+    flex: 1,
+    backgroundColor: 'rgba(120,120,120,0.10)',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    gap: 3,
+  },
+  hfLfDeltaBox: {
+    backgroundColor: 'rgba(120,120,120,0.14)',
+  },
+  hfLfLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#CBD5E1',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  hfLfValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F1F5F9',
   },
   aiAnalysisCard: {
     borderRadius: 14,
@@ -2137,9 +3056,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  lightboxViewport: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
   lightboxImage: {
     width: '100%',
     height: '100%',
+  },
+  lightboxControls: {
+    position: 'absolute',
+    bottom: 28,
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  lightboxToolButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightboxZoomPill: {
+    minWidth: 72,
+    height: 42,
+    borderRadius: 21,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightboxZoomText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   lightboxClose: {
     position: 'absolute',
