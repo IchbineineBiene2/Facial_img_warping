@@ -42,6 +42,38 @@ const cvUnavailable = (res) =>
     message: 'CV service unavailable - is the Python service running?',
   });
 
+async function proxyBinaryToPython(path, req, res) {
+  try {
+    const response = await fetch(`${PYTHON_SERVICE_URL}${path}`, {
+      method: 'POST',
+      headers: req.headers['content-type']
+        ? { 'content-type': req.headers['content-type'] }
+        : {},
+      body: req,
+      duplex: 'half',
+    });
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const disposition = response.headers.get('content-disposition');
+
+    if (contentType.includes('application/json')) {
+      const json = await response.json();
+      return res.status(response.status).json(json);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.status(response.status);
+    res.setHeader('content-type', contentType);
+    if (disposition) res.setHeader('content-disposition', disposition);
+    return res.send(buffer);
+  } catch (err) {
+    if (err.code === 'ECONNREFUSED' || err.cause?.code === 'ECONNREFUSED') {
+      return cvUnavailable(res);
+    }
+    return res.status(500).json({ success: false, message: err.message });
+  }
+}
+
 // Forward multipart FormData to the Python service and return its JSON response.
 async function proxyToPython(path, req, res) {
   try {
@@ -81,7 +113,7 @@ app.get('/api/health', (_req, res) => {
       port: Number(PORT),
       pythonService: PYTHON_SERVICE_URL,
       database: db.dbFile,
-      modules: ['preprocess', 'landmarks', 'warp', 'frequency', 'evaluation', 'export'],
+      modules: ['preprocess', 'landmarks', 'expression-transfer', 'warp', 'frequency', 'evaluation', 'export'],
       counts,
     },
     { phase: 'sqlite-ready' }
@@ -90,11 +122,15 @@ app.get('/api/health', (_req, res) => {
 
 // Proxy multipart image endpoints directly to the Python CV service.
 app.post('/api/preprocess', (req, res) => proxyToPython('/preprocess', req, res));
+app.post('/api/estimate-age', (req, res) => proxyToPython('/estimate-age', req, res));
 app.post('/api/landmarks', (req, res) => proxyToPython('/landmarks', req, res));
+app.post('/api/expression/transfer', (req, res) => proxyToPython('/expression/transfer', req, res));
 app.post('/api/warp', (req, res) => proxyToPython('/warp', req, res));
 app.post('/api/warp/pro', (req, res) => proxyToPython('/warp/pro', req, res));
 app.post('/api/frequency', (req, res) => proxyToPython('/frequency', req, res));
 app.post('/api/frequency/pro', (req, res) => proxyToPython('/frequency/pro', req, res));
+app.post('/api/export/csv', (req, res) => proxyBinaryToPython('/export/csv', req, res));
+app.post('/api/export/pdf', (req, res) => proxyBinaryToPython('/export/pdf', req, res));
 
 app.post('/api/evaluation', (req, res) => {
   const upload = resolveUploadOrFail(res, req.body);

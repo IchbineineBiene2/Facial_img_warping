@@ -1,11 +1,20 @@
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+
+from startup_check import warn_missing_ai_dependencies
+
+try:
+    from deepface import DeepFace
+except Exception:  # optional dependency; endpoint returns a clear error if unavailable
+    DeepFace = None
 
 from modules.aging import apply_aging, apply_deaging
+from modules.evaluation_metrics import compute_quality_metrics
 from modules.landmark import detect_landmarks, draw_landmarks
 from modules.landmark_fusion import detect_landmarks_fused
+from modules.expression_transfer import transfer_expression
 from modules.preprocessing import (
     detect_and_crop_face,
     normalize_face,
@@ -21,7 +30,39 @@ from modules.pro_warping import (
     smile_enhancement_pro,
 )
 from modules.warping import raise_eyebrows, simulate_smile, slim_face, widen_lips
+from modules.reporting import build_report_payload, generate_csv_bytes, generate_pdf_bytes
 from utils.image_utils import bytes_to_numpy, numpy_to_b64
+
+
+warn_missing_ai_dependencies()
+
+
+def _estimate_age_from_image(img: np.ndarray) -> int:
+    if DeepFace is None:
+        raise RuntimeError(
+            "DeepFace is not installed. Add it to python_service/requirements.txt or use a lighter age model backend."
+        )
+
+    try:
+        result = DeepFace.analyze(
+            img_path=img,
+            actions=["age"],
+            detector_backend="opencv",
+            enforce_detection=False,
+            align=False,
+            silent=True,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Face not detected or model error: {exc}") from exc
+
+    if isinstance(result, list):
+        result = result[0] if result else {}
+
+    estimated_age = result.get("age") if isinstance(result, dict) else None
+    if estimated_age is None:
+        raise RuntimeError("Age estimation failed for the provided image.")
+
+    return int(round(float(estimated_age)))
 
 app = FastAPI(title="Facial CV Service")
 
@@ -67,22 +108,94 @@ async def preprocess(image: UploadFile = File(...)):
     }
 
 
-@app.post("/landmarks")
-async def landmarks(image: UploadFile = File(...)):
-    file_bytes = await image.read()
-    img = bytes_to_numpy(file_bytes)
+@app.post("/estimate-age")
+async def estimate_age(image: UploadFile = File(...)):
+    try:
+        file_bytes = await image.read()
+        valid, err = validate_image(file_bytes, image.filename or "upload.jpg")
+        if not valid:
+            return {"error": "Face not detected or model error", "details": err}
 
-    lms = detect_landmarks(img)
-    if lms is None:
-        return {"success": False, "message": "No face detected for landmark extraction."}
+        img = bytes_to_numpy(file_bytes)
+        estimated_age = _estimate_age_from_image(img)
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
 
-    annotated = draw_landmarks(img, lms)
     return {
         "success": True,
-        "landmarks": [[x, y] for x, y in lms],
-        "landmark_image_b64": numpy_to_b64(annotated),
-        "landmark_count": len(lms),
+        "estimated_age": estimated_age,
+        "model": "DeepFace",
+        "message": "Age estimated successfully",
     }
+
+
+@app.post("/landmarks")
+async def landmarks(image: UploadFile = File(...)):
+    try:
+        file_bytes = await image.read()
+        img = bytes_to_numpy(file_bytes)
+
+        lms = detect_landmarks(img)
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected for landmark extraction."}
+
+        annotated = draw_landmarks(img, lms)
+        return {
+            "success": True,
+            "landmarks": [[x, y] for x, y in lms],
+            "landmark_image_b64": numpy_to_b64(annotated),
+            "landmark_count": len(lms),
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+@app.post("/expression/transfer")
+async def expression_transfer(
+    image: UploadFile = File(...),
+    reference_image: UploadFile = File(...),
+    intensity: float = Form(0.7),
+    landmark_backend: str = Form("hybrid"),
+):
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+
+        target_bytes = await image.read()
+        reference_bytes = await reference_image.read()
+
+        valid_target, target_err = validate_image(target_bytes, image.filename or "target.jpg")
+        if not valid_target:
+            return {"error": "Face not detected or model error", "details": target_err}
+
+        valid_reference, reference_err = validate_image(reference_bytes, reference_image.filename or "reference.jpg")
+        if not valid_reference:
+            return {"error": "Face not detected or model error", "details": reference_err}
+
+        target_img = bytes_to_numpy(target_bytes)
+        reference_img = bytes_to_numpy(reference_bytes)
+
+        target_lms, target_info = detect_landmarks_fused(target_img, backend=landmark_backend, temporal_smoothing=False)
+        reference_lms, reference_info = detect_landmarks_fused(reference_img, backend=landmark_backend, temporal_smoothing=False)
+
+        if target_lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected in target image."}
+        if reference_lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected in reference image."}
+
+        transferred = transfer_expression(target_img, target_lms, reference_lms, intensity=intensity)
+
+        return {
+            "success": True,
+            "intensity": intensity,
+            "landmark_backend": landmark_backend,
+            "target_landmark_info": target_info,
+            "reference_landmark_info": reference_info,
+            "result_image_b64": numpy_to_b64(transferred["result_image"]),
+            "destination_landmarks": transferred["destination_landmarks"],
+            "aligned_reference_landmarks": transferred["aligned_reference_landmarks"],
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
 
 
 @app.post("/warp")
@@ -91,34 +204,37 @@ async def warp(
     operation: str = Form("smile"),
     intensity: float = Form(0.5),
 ):
-    intensity = float(np.clip(intensity, 0.0, 1.0))
-    file_bytes = await image.read()
-    img = bytes_to_numpy(file_bytes)
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        img = bytes_to_numpy(file_bytes)
 
-    lms = detect_landmarks(img)
-    if lms is None:
-        return {"success": False, "message": "No face detected."}
+        lms = detect_landmarks(img)
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
 
-    ops = {
-        "smile": simulate_smile,
-        "raise_eyebrows": raise_eyebrows,
-        "widen_lips": widen_lips,
-        "slim_face": slim_face,
-    }
+        ops = {
+            "smile": simulate_smile,
+            "raise_eyebrows": raise_eyebrows,
+            "widen_lips": widen_lips,
+            "slim_face": slim_face,
+        }
 
-    if operation not in ops:
-        return {"success": False, "message": f"Unknown operation '{operation}'. Valid: {list(ops.keys())}"}
+        if operation not in ops:
+            return {"error": "Face not detected or model error", "details": f"Unknown operation '{operation}'. Valid: {list(ops.keys())}"}
 
-    result_img = ops[operation](img, lms, intensity)
-    lms_after = detect_landmarks(result_img) or lms
+        result_img = ops[operation](img, lms, intensity)
+        lms_after = detect_landmarks(result_img) or lms
 
-    return {
-        "success": True,
-        "operation": operation,
-        "result_image_b64": numpy_to_b64(result_img),
-        "landmarks_before": [[x, y] for x, y in lms],
-        "landmarks_after": [[x, y] for x, y in lms_after],
-    }
+        return {
+            "success": True,
+            "operation": operation,
+            "result_image_b64": numpy_to_b64(result_img),
+            "landmarks_before": [[x, y] for x, y in lms],
+            "landmarks_after": [[x, y] for x, y in lms_after],
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
 
 
 @app.post("/warp/pro")
@@ -132,46 +248,49 @@ async def warp_pro(
     ema_alpha: float = Form(0.62),
     stream_id: str = Form("default"),
 ):
-    intensity = float(np.clip(intensity, 0.0, 1.0))
-    file_bytes = await image.read()
-    img = bytes_to_numpy(file_bytes)
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        img = bytes_to_numpy(file_bytes)
 
-    lms, landmark_info = detect_landmarks_fused(
-        img,
-        backend=landmark_backend,
-        temporal_smoothing=temporal_smoothing,
-        ema_alpha=ema_alpha,
-        stream_id=stream_id,
-    )
-    if lms is None:
-        return {"success": False, "message": "No face detected."}
+        lms, landmark_info = detect_landmarks_fused(
+            img,
+            backend=landmark_backend,
+            temporal_smoothing=temporal_smoothing,
+            ema_alpha=ema_alpha,
+            stream_id=stream_id,
+        )
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
 
-    rbf_smooth = float(np.clip(rbf_smooth, 0.8, 10.0))
+        rbf_smooth = float(np.clip(rbf_smooth, 0.8, 10.0))
 
-    ops = {
-        "lip_plump": lambda im, lm, inten: plump_lips_pro(im, lm, inten, smooth=rbf_smooth),
-        "slim_face": lambda im, lm, inten: slim_face_pro(im, lm, inten, smooth=rbf_smooth),
-        "smile_enhancement": lambda im, lm, inten: smile_enhancement_pro(im, lm, inten, smooth=rbf_smooth),
-        "brow_lift": lambda im, lm, inten: brow_lift_pro(im, lm, inten, smooth=rbf_smooth),
-    }
-    if operation not in ops:
-        return {
-            "success": False,
-            "message": f"Unknown operation '{operation}'. Valid: {list(ops.keys())}",
+        ops = {
+            "lip_plump": lambda im, lm, inten: plump_lips_pro(im, lm, inten, smooth=rbf_smooth),
+            "slim_face": lambda im, lm, inten: slim_face_pro(im, lm, inten, smooth=rbf_smooth),
+            "smile_enhancement": lambda im, lm, inten: smile_enhancement_pro(im, lm, inten, smooth=rbf_smooth),
+            "brow_lift": lambda im, lm, inten: brow_lift_pro(im, lm, inten, smooth=rbf_smooth),
         }
+        if operation not in ops:
+            return {
+                "error": "Face not detected or model error",
+                "details": f"Unknown operation '{operation}'. Valid: {list(ops.keys())}",
+            }
 
-    result_img = ops[operation](img, lms, intensity)
-    metrics = quality_metrics(img, result_img)
+        result_img = ops[operation](img, lms, intensity)
+        metrics = quality_metrics(img, result_img)
 
-    return {
-        "success": True,
-        "operation": operation,
-        "intensity": intensity,
-        "rbf_smooth": rbf_smooth,
-        "landmark_info": landmark_info,
-        "metrics": metrics,
-        "result_image_b64": numpy_to_b64(result_img),
-    }
+        return {
+            "success": True,
+            "operation": operation,
+            "intensity": intensity,
+            "rbf_smooth": rbf_smooth,
+            "landmark_info": landmark_info,
+            "metrics": metrics,
+            "result_image_b64": numpy_to_b64(result_img),
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
 
 
 @app.post("/frequency")
@@ -209,38 +328,134 @@ async def frequency_pro(
     ema_alpha: float = Form(0.62),
     stream_id: str = Form("default"),
 ):
-    intensity = float(np.clip(intensity, 0.0, 1.0))
-    file_bytes = await image.read()
-    img = bytes_to_numpy(file_bytes)
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        file_bytes = await image.read()
+        img = bytes_to_numpy(file_bytes)
 
-    lms, landmark_info = detect_landmarks_fused(
-        img,
-        backend=landmark_backend,
-        temporal_smoothing=temporal_smoothing,
-        ema_alpha=ema_alpha,
-        stream_id=stream_id,
+        lms, landmark_info = detect_landmarks_fused(
+            img,
+            backend=landmark_backend,
+            temporal_smoothing=temporal_smoothing,
+            ema_alpha=ema_alpha,
+            stream_id=stream_id,
+        )
+
+        if lms is None:
+            return {"error": "Face not detected or model error", "details": "No face detected."}
+
+        if mode == "aging":
+            out = aging_pro(img, lms, intensity=intensity)
+        elif mode == "deaging":
+            out = de_aging_pro(img, lms, intensity=intensity)
+        else:
+            return {
+                "error": "Face not detected or model error",
+                "details": f"Unknown mode '{mode}'. Valid: aging, deaging",
+            }
+
+        return {
+            "success": True,
+            "mode": mode,
+            "intensity": intensity,
+            "landmark_info": landmark_info,
+            "result_image_b64": numpy_to_b64(out["result_image"]),
+            "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
+            "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),
+            "metrics": out["metrics"],
+        }
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+def _parse_optional_float(value: str | None) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _build_export_response(payload, csv_or_pdf: bytes, filename: str, media_type: str) -> Response:
+    return Response(
+        content=csv_or_pdf,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-    if mode == "aging":
-        out = aging_pro(img, lms, intensity=intensity)
-    elif mode == "deaging":
-        out = de_aging_pro(img, lms, intensity=intensity)
-    else:
-        return {
-            "success": False,
-            "message": f"Unknown mode '{mode}'. Valid: aging, deaging",
-        }
 
-    return {
-        "success": True,
-        "mode": mode,
-        "intensity": intensity,
-        "landmark_info": landmark_info,
-        "result_image_b64": numpy_to_b64(out["result_image"]),
-        "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
-        "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),
-        "metrics": out["metrics"],
-    }
+@app.post("/export/csv")
+async def export_csv(
+    original_image: UploadFile = File(...),
+    result_image: UploadFile = File(...),
+    operation: str = Form("pro"),
+    intensity: float = Form(0.0),
+    age_before: str | None = Form(None),
+    age_after: str | None = Form(None),
+):
+    try:
+        original_bytes = await original_image.read()
+        result_bytes = await result_image.read()
+        valid_original, original_err = validate_image(original_bytes, original_image.filename or "original.jpg")
+        if not valid_original:
+            return {"error": "Face not detected or model error", "details": original_err}
+
+        valid_result, result_err = validate_image(result_bytes, result_image.filename or "result.jpg")
+        if not valid_result:
+            return {"error": "Face not detected or model error", "details": result_err}
+
+        original_img = bytes_to_numpy(original_bytes)
+        result_img = bytes_to_numpy(result_bytes)
+        metrics = compute_quality_metrics(original_img, result_img)
+        payload = build_report_payload(
+            operation=operation,
+            intensity=float(intensity),
+            age_before=age_before,
+            age_after=age_after,
+            metrics=metrics,
+            original_image_bytes=original_bytes,
+            result_image_bytes=result_bytes,
+        )
+        csv_bytes = generate_csv_bytes(payload)
+        return _build_export_response(payload, csv_bytes, "facial-report.csv", "text/csv; charset=utf-8")
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
+
+
+@app.post("/export/pdf")
+async def export_pdf(
+    original_image: UploadFile = File(...),
+    result_image: UploadFile = File(...),
+    operation: str = Form("pro"),
+    intensity: float = Form(0.0),
+    age_before: str | None = Form(None),
+    age_after: str | None = Form(None),
+):
+    try:
+        original_bytes = await original_image.read()
+        result_bytes = await result_image.read()
+        valid_original, original_err = validate_image(original_bytes, original_image.filename or "original.jpg")
+        if not valid_original:
+            return {"error": "Face not detected or model error", "details": original_err}
+
+        valid_result, result_err = validate_image(result_bytes, result_image.filename or "result.jpg")
+        if not valid_result:
+            return {"error": "Face not detected or model error", "details": result_err}
+
+        original_img = bytes_to_numpy(original_bytes)
+        result_img = bytes_to_numpy(result_bytes)
+        metrics = compute_quality_metrics(original_img, result_img)
+        payload = build_report_payload(
+            operation=operation,
+            intensity=float(intensity),
+            age_before=age_before,
+            age_after=age_after,
+            metrics=metrics,
+            original_image_bytes=original_bytes,
+            result_image_bytes=result_bytes,
+        )
+        pdf_bytes = generate_pdf_bytes(payload)
+        return _build_export_response(payload, pdf_bytes, "facial-report.pdf", "application/pdf")
+    except Exception as exc:
+        return {"error": "Face not detected or model error", "details": str(exc)}
 
 
 if __name__ == "__main__":

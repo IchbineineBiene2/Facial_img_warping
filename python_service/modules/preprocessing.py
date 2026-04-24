@@ -26,17 +26,22 @@ def _build_detector():
 _detector = _build_detector()
 
 
+def _detect_image_kind(file_bytes: bytes) -> str | None:
+    if file_bytes.startswith(_PNG_MAGIC):
+        return 'png'
+    if file_bytes.startswith(_JPEG_MAGIC):
+        return 'jpeg'
+    return None
+
+
 def validate_image(file_bytes: bytes, filename: str) -> tuple[bool, str]:
     ext = os.path.splitext(filename.lower())[1]
-    if ext not in _ALLOWED_EXTENSIONS:
+    if ext and ext not in _ALLOWED_EXTENSIONS:
         return False, f"Unsupported file type '{ext}'. Allowed: jpg, jpeg, png."
 
-    if ext == '.png':
-        if file_bytes[:4] != _PNG_MAGIC:
-            return False, "File does not appear to be a valid PNG."
-    else:
-        if file_bytes[:3] != _JPEG_MAGIC:
-            return False, "File does not appear to be a valid JPEG."
+    detected_kind = _detect_image_kind(file_bytes)
+    if detected_kind is None:
+        return False, "File does not appear to be a valid JPEG or PNG."
 
     img = bytes_to_numpy(file_bytes)
     if img is None:

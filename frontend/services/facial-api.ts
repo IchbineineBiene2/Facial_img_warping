@@ -73,7 +73,56 @@ function base64ToBlob(b64: string, mimeType = 'image/png'): Blob {
 
 async function requestJson(endpoint: string, body: FormData): Promise<any> {
   const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    const responseText = await response.text();
+    throw new Error(responseText || 'Expected JSON response');
+  }
+
   return response.json();
+}
+
+function parseFilename(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(contentDisposition);
+  const encodedName = match?.[1] || match?.[2];
+  if (!encodedName) {
+    return fallback;
+  }
+
+  try {
+    return decodeURIComponent(encodedName);
+  } catch {
+    return encodedName;
+  }
+}
+
+async function requestDownload(endpoint: string, body: FormData, fallbackName: string): Promise<{
+  bytes: ArrayBuffer;
+  filename: string;
+  mimeType: string;
+}> {
+  const response = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', body });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `HTTP ${response.status}`);
+  }
+
+  return {
+    bytes: await response.arrayBuffer(),
+    filename: parseFilename(response.headers.get('content-disposition'), fallbackName),
+    mimeType: response.headers.get('content-type') ?? 'application/octet-stream',
+  };
 }
 
 async function toImageFilePart(uri: string): Promise<Blob | { uri: string; name: string; type: string }> {
@@ -86,6 +135,10 @@ async function toImageFilePart(uri: string): Promise<Blob | { uri: string; name:
   const ext = filename.split('.').pop()?.toLowerCase() ?? 'jpg';
   const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
   return { uri, name: filename, type: mimeType };
+}
+
+async function toBase64ImagePart(imageBase64: string): Promise<Blob> {
+  return base64ToBlob(imageBase64);
 }
 
 export async function preprocessFromUri(uri: string): Promise<any> {
@@ -123,6 +176,51 @@ export async function frequencyFromBase64(imageBase64: string, mode: 'aging' | '
   formData.append('mode', mode);
   formData.append('intensity', String(intensity));
   return requestJson('/api/frequency', formData);
+}
+
+export async function estimateAgeFromUri(uri: string): Promise<any> {
+  const formData = new FormData();
+  const imagePart = await toImageFilePart(uri);
+
+  if (Platform.OS === 'web') {
+    formData.append('image', imagePart as Blob, 'image.png');
+  } else {
+    formData.append('image', imagePart as any);
+  }
+
+  return requestJson('/api/estimate-age', formData);
+}
+
+export async function estimateAgeFromBase64(imageBase64: string): Promise<any> {
+  const formData = new FormData();
+  formData.append('image', await toBase64ImagePart(imageBase64), 'image.png');
+  return requestJson('/api/estimate-age', formData);
+}
+
+export async function transferExpressionFromBase64(
+  imageBase64: string,
+  referenceImageUri: string,
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+  }
+): Promise<any> {
+  const formData = new FormData();
+  const referencePart = await toImageFilePart(referenceImageUri);
+
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+
+  if (Platform.OS === 'web') {
+    const referenceBlob = referencePart as Blob;
+    const referenceExt = referenceBlob.type === 'image/png' ? 'png' : 'jpg';
+    formData.append('reference_image', referenceBlob, `reference.${referenceExt}`);
+  } else {
+    formData.append('reference_image', referencePart as any);
+  }
+
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  return requestJson('/api/expression/transfer', formData);
 }
 
 export type ProMetrics = {
@@ -180,4 +278,40 @@ export async function frequencyProFromBase64(
   formData.append('ema_alpha', String(options?.emaAlpha ?? 0.62));
   formData.append('stream_id', options?.streamId ?? 'default');
   return requestJson('/api/frequency/pro', formData);
+}
+
+export async function exportCsvReportFromBase64(params: {
+  originalImageBase64: string;
+  resultImageBase64: string;
+  operation: string;
+  intensity: number;
+  ageBefore?: string | number | null;
+  ageAfter?: string | number | null;
+}): Promise<{ bytes: ArrayBuffer; filename: string; mimeType: string }> {
+  const formData = new FormData();
+  formData.append('original_image', base64ToBlob(params.originalImageBase64), 'original.png');
+  formData.append('result_image', base64ToBlob(params.resultImageBase64), 'result.png');
+  formData.append('operation', params.operation);
+  formData.append('intensity', String(params.intensity));
+  formData.append('age_before', params.ageBefore != null ? String(params.ageBefore) : '');
+  formData.append('age_after', params.ageAfter != null ? String(params.ageAfter) : '');
+  return requestDownload('/api/export/csv', formData, 'facial-report.csv');
+}
+
+export async function exportPdfReportFromBase64(params: {
+  originalImageBase64: string;
+  resultImageBase64: string;
+  operation: string;
+  intensity: number;
+  ageBefore?: string | number | null;
+  ageAfter?: string | number | null;
+}): Promise<{ bytes: ArrayBuffer; filename: string; mimeType: string }> {
+  const formData = new FormData();
+  formData.append('original_image', base64ToBlob(params.originalImageBase64), 'original.png');
+  formData.append('result_image', base64ToBlob(params.resultImageBase64), 'result.png');
+  formData.append('operation', params.operation);
+  formData.append('intensity', String(params.intensity));
+  formData.append('age_before', params.ageBefore != null ? String(params.ageBefore) : '');
+  formData.append('age_after', params.ageAfter != null ? String(params.ageAfter) : '');
+  return requestDownload('/api/export/pdf', formData, 'facial-report.pdf');
 }

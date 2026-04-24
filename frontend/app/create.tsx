@@ -3,7 +3,6 @@ import * as FileSystem from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import * as Print from 'expo-print';
 import { useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,10 +28,15 @@ import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
+    estimateAgeFromBase64,
+    estimateAgeFromUri,
+    exportCsvReportFromBase64,
+    exportPdfReportFromBase64,
     frequencyFromBase64,
     frequencyProFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
+  transferExpressionFromBase64,
     warpFromBase64,
     warpProFromBase64,
     type ProMetrics,
@@ -43,8 +47,10 @@ import { Ionicons } from '@expo/vector-icons';
 const MIN_WIDTH = 512;
 const MIN_HEIGHT = 512;
 const MIN_CROP_SIZE = 24;
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 type ProcessState = 'idle' | 'selected' | 'error';
+type AgeTarget = 'before' | 'after';
 
 type CropBox = {
   x: number;
@@ -176,6 +182,16 @@ export default function CreateScreen() {
   const [warpError, setWarpError] = useState<string | null>(null);
   const [warpResultB64, setWarpResultB64] = useState<string | null>(null);
 
+  const [referenceExpressionName, setReferenceExpressionName] = useState<string | null>(null);
+  const [referenceExpressionUri, setReferenceExpressionUri] = useState<string | null>(null);
+  const [referenceExpressionSize, setReferenceExpressionSize] = useState<{ width: number; height: number } | null>(null);
+  const [expressionTransferIntensity, setExpressionTransferIntensity] = useState(0.75);
+  const [expressionTransferLoading, setExpressionTransferLoading] = useState(false);
+  const [expressionTransferError, setExpressionTransferError] = useState<string | null>(null);
+  const [expressionTransferResultB64, setExpressionTransferResultB64] = useState<string | null>(null);
+  const [manualLipWarpResultB64, setManualLipWarpResultB64] = useState<string | null>(null);
+  const [manualLipWarpError, setManualLipWarpError] = useState<string | null>(null);
+
   const [agingIntensity, setAgingIntensity] = useState(0.8);
   const [agingLoading, setAgingLoading] = useState(false);
   const [agingError, setAgingError] = useState<string | null>(null);
@@ -191,10 +207,71 @@ export default function CreateScreen() {
   const [proMetrics, setProMetrics] = useState<ProMetrics | null>(null);
   const [spectrumBeforeB64, setSpectrumBeforeB64] = useState<string | null>(null);
   const [spectrumAfterB64, setSpectrumAfterB64] = useState<string | null>(null);
+  const [ageBefore, setAgeBefore] = useState<number | null>(null);
+  const [ageAfter, setAgeAfter] = useState<number | null>(null);
+  const [ageLoading, setAgeLoading] = useState(false);
+  const [ageError, setAgeError] = useState<string | null>(null);
   const proDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ageRequestRef = useRef(0);
   const [proCompareHeld, setProCompareHeld] = useState(false);
   const proCompareOpacity = useRef(new Animated.Value(0)).current;
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer);
+    let output = '';
+    let index = 0;
+
+    while (index < bytes.length) {
+      const byte1 = bytes[index++] ?? 0;
+      const byte2 = bytes[index++];
+      const byte3 = bytes[index++];
+
+      const enc1 = byte1 >> 2;
+      const enc2 = ((byte1 & 0x03) << 4) | ((byte2 ?? 0) >> 4);
+      const enc3 = byte2 == null ? 64 : (((byte2 & 0x0f) << 2) | ((byte3 ?? 0) >> 6));
+      const enc4 = byte3 == null ? 64 : (byte3 & 0x3f);
+
+      output += BASE64_ALPHABET.charAt(enc1);
+      output += BASE64_ALPHABET.charAt(enc2);
+      output += enc3 === 64 ? '=' : BASE64_ALPHABET.charAt(enc3);
+      output += enc4 === 64 ? '=' : BASE64_ALPHABET.charAt(enc4);
+    }
+
+    return output;
+  };
+
+  const saveDownloadedReport = async (bytes: ArrayBuffer, mimeType: string, filename: string) => {
+    if (Platform.OS === 'web') {
+      const blob = new Blob([bytes], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    const dir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+    if (!dir) {
+      throw new Error('Dosya dizini bulunamadı.');
+    }
+
+    const uri = `${dir}${filename}`;
+    if (mimeType.includes('text/csv')) {
+      const text = new TextDecoder().decode(bytes);
+      await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
+    } else {
+      await FileSystem.writeAsStringAsync(uri, arrayBufferToBase64(bytes), { encoding: FileSystem.EncodingType.Base64 });
+    }
+
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType });
+    }
+  };
 
   useEffect(() => {
     cropBoxRef.current = cropBox;
@@ -217,6 +294,65 @@ export default function CreateScreen() {
   const updateCropBox = (nextBox: CropBox | null) => {
     cropBoxRef.current = nextBox;
     setCropBox(nextBox);
+  };
+
+  const resetExpressionTransferState = () => {
+    setReferenceExpressionName(null);
+    setReferenceExpressionUri(null);
+    setReferenceExpressionSize(null);
+    setExpressionTransferLoading(false);
+    setExpressionTransferError(null);
+    setExpressionTransferResultB64(null);
+    setManualLipWarpResultB64(null);
+    setManualLipWarpError(null);
+  };
+
+  const resetAgeAnalysis = () => {
+    ageRequestRef.current += 1;
+    setAgeBefore(null);
+    setAgeAfter(null);
+    setAgeLoading(false);
+    setAgeError(null);
+  };
+
+  const runAgeAnalysis = async (source: string, target: AgeTarget, kind: 'uri' | 'base64') => {
+    const requestId = ++ageRequestRef.current;
+    setAgeLoading(true);
+    setAgeError(null);
+
+    try {
+      const data = kind === 'uri' ? await estimateAgeFromUri(source) : await estimateAgeFromBase64(source);
+      if (!data.success) {
+        throw new Error(data.message ?? 'Age estimation failed');
+      }
+
+      const estimatedAge = Number(data.estimated_age ?? data.age);
+      if (!Number.isFinite(estimatedAge)) {
+        throw new Error('Age estimation returned an invalid value.');
+      }
+
+      if (requestId !== ageRequestRef.current) {
+        return;
+      }
+
+      if (target === 'before') {
+        setAgeBefore(Math.round(estimatedAge));
+      } else {
+        setAgeAfter(Math.round(estimatedAge));
+      }
+    } catch (error) {
+      if (requestId !== ageRequestRef.current) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Age estimation failed.';
+      setAgeError(message);
+      Alert.alert('AI Analizinde hata oluştu', message);
+    } finally {
+      if (requestId === ageRequestRef.current) {
+        setAgeLoading(false);
+      }
+    }
   };
 
   const closeCropEditor = () => {
@@ -371,7 +507,53 @@ export default function CreateScreen() {
     setProcessState('selected');
     setStatusMessage(`Seçilen görsel hazır: ${asset.width}x${asset.height}.`);
     setCropApplied(false);
+    resetExpressionTransferState();
+    resetAgeAnalysis();
     closeCropEditor();
+    void runAgeAnalysis(asset.uri, 'before', 'uri');
+  };
+
+  const pickReferenceExpressionImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.4,
+      allowsEditing: false,
+      selectionLimit: 1,
+    });
+
+    if (result.canceled || result.assets.length === 0) {
+      return;
+    }
+
+    const asset = result.assets[0];
+    const rawName = asset.fileName ?? asset.uri.split('/').pop() ?? 'reference_expression';
+    const mimeType = (asset.mimeType ?? '').toLowerCase();
+    const isImageMime = mimeType === '' || mimeType.startsWith('image/');
+
+    if (!isImageMime) {
+      setReferenceExpressionName(null);
+      setReferenceExpressionUri(null);
+      setReferenceExpressionSize(null);
+      setExpressionTransferError('Lütfen geçerli bir referans görseli seçin.');
+      return;
+    }
+
+    if ((asset.width ?? 0) < MIN_WIDTH || (asset.height ?? 0) < MIN_HEIGHT) {
+      setReferenceExpressionName(null);
+      setReferenceExpressionUri(null);
+      setReferenceExpressionSize(null);
+      setExpressionTransferError(`Referans görsel en az ${MIN_WIDTH}x${MIN_HEIGHT} olmalı. Seçilen: ${asset.width}x${asset.height}.`);
+      return;
+    }
+
+    setReferenceExpressionName(rawName);
+    setReferenceExpressionUri(asset.uri);
+    setReferenceExpressionSize({ width: asset.width ?? MIN_WIDTH, height: asset.height ?? MIN_HEIGHT });
+    setExpressionTransferError(null);
+    setExpressionTransferResultB64(null);
+    setManualLipWarpResultB64(null);
+    setManualLipWarpError(null);
+    setStatusMessage('Referans ifade görseli hazır. Transfer işlemini başlatabilirsin.');
   };
 
   const cropImage = async () => {
@@ -418,7 +600,9 @@ export default function CreateScreen() {
       setCropApplied(true);
       setProcessState('selected');
       setStatusMessage('Kırpma uygulandı. Görsel artık seçtiğin kadrajla hazır.');
+      resetAgeAnalysis();
       closeCropEditor();
+      void runAgeAnalysis(result.uri, 'before', 'uri');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Kırpma uygulanamadı.';
       setProcessState('error');
@@ -434,11 +618,13 @@ export default function CreateScreen() {
     setLandmarkB64(null);
     setLandmarkCount(null);
     setWarpResultB64(null);
+    resetExpressionTransferState();
     setAgingResultB64(null);
     setProResultB64(null);
     setProMetrics(null);
     setSpectrumBeforeB64(null);
     setSpectrumAfterB64(null);
+    setAgeAfter(null);
     setProCompareHeld(false);
     proCompareOpacity.setValue(0);
     try {
@@ -477,10 +663,56 @@ export default function CreateScreen() {
       const data = await warpFromBase64(preprocessedB64, warpOp, warpIntensity);
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
+      setAgeAfter(null);
+      void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (e: any) {
       setWarpError(e?.message ?? 'Unknown error');
     } finally {
       setWarpLoading(false);
+    }
+  };
+
+  const handleExpressionTransfer = async () => {
+    if (!preprocessedB64 || !referenceExpressionUri) {
+      setExpressionTransferError('Önce ana görseli ve referans ifade görselini seçmelisin.');
+      return;
+    }
+
+    setExpressionTransferLoading(true);
+    setExpressionTransferError(null);
+    setExpressionTransferResultB64(null);
+    setManualLipWarpResultB64(null);
+    setManualLipWarpError(null);
+
+    try {
+      const transferData = await transferExpressionFromBase64(preprocessedB64, referenceExpressionUri, expressionTransferIntensity, {
+        landmarkBackend: 'hybrid',
+      });
+
+      if (!transferData.success) {
+        throw new Error(transferData.message ?? 'Expression transfer failed');
+      }
+
+      setExpressionTransferResultB64(transferData.result_image_b64);
+      setAgeAfter(null);
+      void runAgeAnalysis(transferData.result_image_b64, 'after', 'base64');
+
+      try {
+        const baselineData = await warpFromBase64(preprocessedB64, 'widen_lips', expressionTransferIntensity);
+        if (baselineData.success) {
+          setManualLipWarpResultB64(baselineData.result_image_b64);
+        } else {
+          setManualLipWarpError(baselineData.message ?? 'Manual lip warp baseline could not be generated.');
+        }
+      } catch (baselineError) {
+        const message = baselineError instanceof Error ? baselineError.message : 'Manual lip warp baseline could not be generated.';
+        setManualLipWarpError(message);
+      }
+    } catch (error: any) {
+      setExpressionTransferError(error?.message ?? 'Unknown expression transfer error');
+      Alert.alert('AI Analizinde hata oluştu', error?.message ?? 'Unknown expression transfer error');
+    } finally {
+      setExpressionTransferLoading(false);
     }
   };
 
@@ -494,6 +726,8 @@ export default function CreateScreen() {
       const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
+      setAgeAfter(null);
+      void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (e: any) {
       setAgingError(e?.message ?? 'Unknown error');
     } finally {
@@ -525,6 +759,8 @@ export default function CreateScreen() {
         setProMetrics(data.metrics ?? null);
         setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
         setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
+        setAgeAfter(null);
+        void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
       } else {
         const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
           landmarkBackend: 'hybrid',
@@ -537,6 +773,8 @@ export default function CreateScreen() {
         setProMetrics(data.metrics ?? null);
         setSpectrumBeforeB64(null);
         setSpectrumAfterB64(null);
+        setAgeAfter(null);
+        void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
       }
     } catch (e: any) {
       setProError(e?.message ?? 'Unknown pro error');
@@ -576,56 +814,27 @@ export default function CreateScreen() {
     };
   }, [preprocessedB64, proOperation, proIntensity, proRbfSmooth]);
 
-  const buildReportCsv = () => {
-    const metrics = proMetrics;
-    const rows: Array<[string, string]> = [
-      ['operation', PRO_LABEL[proOperation]],
-      ['intensity', proIntensity.toFixed(2)],
-      ['rbf_smooth', proRbfSmooth.toFixed(2)],
-      ['mse', metrics ? String(metrics.mse) : ''],
-      ['psnr', metrics ? String(metrics.psnr) : ''],
-      ['ssim', metrics ? String(metrics.ssim) : ''],
-      ['hf_lf_ratio_before', metrics?.hf_lf_ratio_before != null ? String(metrics.hf_lf_ratio_before) : ''],
-      ['hf_lf_ratio_after', metrics?.hf_lf_ratio_after != null ? String(metrics.hf_lf_ratio_after) : ''],
-      ['hf_lf_ratio_delta', metrics?.hf_lf_ratio_delta != null ? String(metrics.hf_lf_ratio_delta) : ''],
-    ];
-    return rows.map(([k, v]) => `${k},${v}`).join('\n');
-  };
-
   const exportCsv = async () => {
     if (!proResultB64 || !proMetrics) {
       Alert.alert('Rapor Hazır Değil', 'Önce Pro işlem sonucu üretmelisin.');
       return;
     }
 
-    const csv = buildReportCsv();
-    const fileName = `pro-report-${Date.now()}.csv`;
-
-    if (Platform.OS === 'web') {
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+    try {
+      const download = await exportCsvReportFromBase64({
+        originalImageBase64: preprocessedB64,
+        resultImageBase64: proResultB64,
+        operation: PRO_LABEL[proOperation],
+        intensity: proIntensity,
+        ageBefore,
+        ageAfter,
+      });
+      await saveDownloadedReport(download.bytes, download.mimeType, download.filename);
       setStatusMessage('CSV raporu indirildi.');
-      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'CSV raporu alınamadı.';
+      Alert.alert('Export Hatası', message);
     }
-
-    const dir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-    if (!dir) {
-      Alert.alert('Export Hatası', 'Dosya dizini bulunamadı.');
-      return;
-    }
-    const uri = `${dir}${fileName}`;
-    await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { mimeType: 'text/csv' });
-    }
-    setStatusMessage('CSV raporu paylaşıma hazırlandı.');
   };
 
   const exportPdf = async () => {
@@ -634,35 +843,97 @@ export default function CreateScreen() {
       return;
     }
 
-    const html = `
-      <html>
-      <body style="font-family: Arial, sans-serif; padding: 24px;">
-        <h2>Facial Pro Report</h2>
-        <p><b>Operation:</b> ${PRO_LABEL[proOperation]}</p>
-        <p><b>Intensity:</b> ${proIntensity.toFixed(2)} | <b>RBF Smooth:</b> ${proRbfSmooth.toFixed(2)}</p>
-        <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; margin-top: 12px;">
-          <tr><th>Metric</th><th>Value</th></tr>
-          <tr><td>MSE</td><td>${proMetrics.mse}</td></tr>
-          <tr><td>PSNR</td><td>${proMetrics.psnr}</td></tr>
-          <tr><td>SSIM</td><td>${proMetrics.ssim}</td></tr>
-          <tr><td>HF/LF Before</td><td>${proMetrics.hf_lf_ratio_before ?? ''}</td></tr>
-          <tr><td>HF/LF After</td><td>${proMetrics.hf_lf_ratio_after ?? ''}</td></tr>
-          <tr><td>HF/LF Delta</td><td>${proMetrics.hf_lf_ratio_delta ?? ''}</td></tr>
-        </table>
-      </body>
-      </html>
-    `;
-
-    const { uri } = await Print.printToFileAsync({ html });
-    if (Platform.OS === 'web') {
-      setStatusMessage('PDF raporu oluşturuldu.');
-      return;
+    try {
+      const download = await exportPdfReportFromBase64({
+        originalImageBase64: preprocessedB64,
+        resultImageBase64: proResultB64,
+        operation: PRO_LABEL[proOperation],
+        intensity: proIntensity,
+        ageBefore,
+        ageAfter,
+      });
+      await saveDownloadedReport(download.bytes, download.mimeType, download.filename);
+      setStatusMessage('PDF raporu indirildi.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'PDF raporu alınamadı.';
+      Alert.alert('Export Hatası', message);
     }
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { mimeType: 'application/pdf' });
-    }
-    setStatusMessage('PDF raporu paylaşıma hazırlandı.');
   };
+
+  const renderAgeAnalysisCard = () => (
+    <View style={styles.aiAnalysisCard}>
+      <View style={styles.aiAnalysisHeaderRow}>
+        <View style={{ flex: 1 }}>
+          <ThemedText type="defaultSemiBold">AI Analysis</ThemedText>
+          <ThemedText style={styles.helperText}>DeepFace age estimation</ThemedText>
+        </View>
+        {ageLoading ? (
+          <ActivityIndicator />
+        ) : (
+          <View style={styles.aiAnalysisPill}>
+            <ThemedText style={styles.aiAnalysisPillText}>Live</ThemedText>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.ageCompareRow}>
+        <View style={styles.ageStatCard}>
+          <ThemedText style={styles.ageStatLabel}>Before</ThemedText>
+          <ThemedText style={styles.ageStatValue}>{ageBefore != null ? String(ageBefore) : '—'}</ThemedText>
+        </View>
+        <View style={styles.ageStatCard}>
+          <ThemedText style={styles.ageStatLabel}>After</ThemedText>
+          <ThemedText style={styles.ageStatValue}>{ageAfter != null ? String(ageAfter) : '—'}</ThemedText>
+        </View>
+      </View>
+
+      <ThemedText style={styles.helperText}>
+        {ageBefore != null && ageAfter != null
+          ? `Before: ${ageBefore} -> After: ${ageAfter}`
+          : ageBefore != null
+            ? `Estimated Age: ${ageBefore}`
+            : 'Estimated Age: —'}
+      </ThemedText>
+      {ageError ? <Text style={styles.errorText}>{ageError}</Text> : null}
+    </View>
+  );
+
+  const renderExpressionComparisonCard = () => (
+    <View style={styles.compareCard}>
+      <View style={styles.compareHeaderRow}>
+        <View style={{ flex: 1 }}>
+          <ThemedText type="defaultSemiBold">AI Expression Transfer</ThemedText>
+          <ThemedText style={styles.helperText}>Reference expression -> target face</ThemedText>
+        </View>
+        <View style={styles.compareHintPill}>
+          <ThemedText style={styles.compareHintText}>AI vs Manual Lip Warp</ThemedText>
+        </View>
+      </View>
+
+      <View style={styles.sideBySide}>
+        <View style={styles.sideBox}>
+          <ThemedText style={styles.sideLabel}>AI Transfer</ThemedText>
+          <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${expressionTransferResultB64}`)}>
+            <Image source={{ uri: `data:image/png;base64,${expressionTransferResultB64}` }} style={styles.sideImage} contentFit="contain" />
+          </Pressable>
+        </View>
+        <View style={styles.sideBox}>
+          <ThemedText style={styles.sideLabel}>Manual Lip Warp</ThemedText>
+          {manualLipWarpResultB64 ? (
+            <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${manualLipWarpResultB64}`)}>
+              <Image source={{ uri: `data:image/png;base64,${manualLipWarpResultB64}` }} style={styles.sideImage} contentFit="contain" />
+            </Pressable>
+          ) : (
+            <View style={styles.sideImagePlaceholder}>
+              <ThemedText style={styles.helperText}>Baseline is generating or unavailable.</ThemedText>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {manualLipWarpError ? <Text style={styles.errorText}>{manualLipWarpError}</Text> : null}
+    </View>
+  );
 
   return (
     <ThemedView style={styles.screen}>
@@ -832,6 +1103,59 @@ export default function CreateScreen() {
               </Pressable>
             ) : null}
 
+            {/* Section 3.1: Expression Transfer */}
+            <ThemedText type="defaultSemiBold">3.1 İfade Transferi</ThemedText>
+            <ThemedText style={styles.helperText}>
+              Referans ifade görselindeki yüz ifadesini ana görsele aktarıp sonuçta yaş değişimini otomatik ölçer.
+            </ThemedText>
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 ? 1 : 0.4 }]}
+              onPress={pickReferenceExpressionImage}
+              disabled={!preprocessedB64}>
+              <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>Reference Expression Image Seç</ThemedText>
+            </Pressable>
+            {referenceExpressionName ? (
+              <View style={styles.fileCard}>
+                <ThemedText type="defaultSemiBold">Referans Görsel</ThemedText>
+                <ThemedText style={styles.fileText}>{referenceExpressionName}</ThemedText>
+                <ThemedText style={styles.fileText}>
+                  {referenceExpressionSize ? `${referenceExpressionSize.width} x ${referenceExpressionSize.height}` : 'Boyut bilinmiyor'}
+                </ThemedText>
+              </View>
+            ) : null}
+            {referenceExpressionUri ? (
+              <Pressable onPress={() => setLightboxUri(referenceExpressionUri)}>
+                <Image source={{ uri: referenceExpressionUri }} style={styles.resultImage} contentFit="contain" />
+              </Pressable>
+            ) : null}
+
+            <ThemedText style={styles.helperText}>Transfer yoğunluğu: {expressionTransferIntensity.toFixed(2)}</ThemedText>
+            <Slider
+              style={styles.nativeSlider}
+              minimumValue={0}
+              maximumValue={1}
+              step={0.01}
+              value={expressionTransferIntensity}
+              onValueChange={setExpressionTransferIntensity}
+              minimumTrackTintColor={colors.tint}
+              maximumTrackTintColor="rgba(120,120,120,0.25)"
+              thumbTintColor={colors.tint}
+              disabled={!preprocessedB64 || !referenceExpressionUri}
+            />
+
+            <Pressable
+              style={[styles.cvButton, { backgroundColor: Colors[colorScheme].tint, opacity: preprocessedB64 && referenceExpressionUri ? 1 : 0.4 }]}
+              onPress={handleExpressionTransfer}
+              disabled={!preprocessedB64 || !referenceExpressionUri || expressionTransferLoading}>
+              {expressionTransferLoading
+                ? <ActivityIndicator color={tintTextColor} />
+                : <ThemedText style={[styles.cvButtonText, { color: tintTextColor }]}>İfadeyi Aktar</ThemedText>}
+            </Pressable>
+            {expressionTransferError ? <Text style={styles.errorText}>{expressionTransferError}</Text> : null}
+
+            {expressionTransferResultB64 && preprocessedB64 ? renderExpressionComparisonCard() : null}
+            {expressionTransferResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
+
             {/* Section 3: Expression Warp */}
             <ThemedText type="defaultSemiBold">3. Yüz Deforme</ThemedText>
             <View style={styles.warpGrid}>
@@ -890,6 +1214,7 @@ export default function CreateScreen() {
                 </View>
               </View>
             ) : null}
+            {warpResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
             {/* Section 4: Aging Simulation */}
             <ThemedText type="defaultSemiBold">4. Yaşlandırma / Gençleştirme</ThemedText>
@@ -940,6 +1265,7 @@ export default function CreateScreen() {
                 </View>
               </View>
             ) : null}
+            {agingResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
             {/* Section 5: Pro Lab */}
             <ThemedText type="defaultSemiBold">5. Pro Lab (Canlı)</ThemedText>
@@ -1055,6 +1381,8 @@ export default function CreateScreen() {
                 </Pressable>
               </View>
             ) : null}
+
+            {proResultB64 && preprocessedB64 ? renderAgeAnalysisCard() : null}
 
             {proMetrics ? (
               <View style={styles.metricsCard}>
@@ -1654,6 +1982,15 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: 'rgba(120,120,120,0.1)',
   },
+  sideImagePlaceholder: {
+    width: '100%',
+    height: 120,
+    borderRadius: 10,
+    backgroundColor: 'rgba(120,120,120,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
   agingRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1665,6 +2002,53 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(120,120,120,0.08)',
     padding: 10,
     gap: 2,
+  },
+  aiAnalysisCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(120,120,120,0.22)',
+    backgroundColor: 'rgba(120,120,120,0.09)',
+    padding: 12,
+    gap: 10,
+  },
+  aiAnalysisHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  aiAnalysisPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(120,120,120,0.14)',
+  },
+  aiAnalysisPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    opacity: 0.85,
+  },
+  ageCompareRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  ageStatCard: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    gap: 4,
+  },
+  ageStatLabel: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    opacity: 0.68,
+  },
+  ageStatValue: {
+    fontSize: 22,
+    fontWeight: '800',
   },
   lightboxBackdrop: {
     flex: 1,
