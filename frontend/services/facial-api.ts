@@ -305,6 +305,50 @@ export async function frequencyProFromBase64(
   return requestJson('/api/frequency/pro', formData);
 }
 
+export type AgingCompareResult = {
+  success: boolean;
+  mode: 'aging' | 'deaging';
+  intensity: number;
+  age_estimation: {
+    before: number;
+    detected: boolean;
+    after_frequency: number;
+    after_ai: number | null;
+  };
+  frequency_based: {
+    result_image_b64: string;
+    metrics: { mse: number; psnr: number; ssim: number };
+  };
+  ai_guided: {
+    success: boolean;
+    landmark_info: unknown | null;
+    result_image_b64: string | null;
+    metrics: { mse: number; psnr: number; ssim: number };
+  };
+  comparison: {
+    mse_delta: number | null;
+    psnr_delta: number | null;
+    ssim_delta: number | null;
+    winner: 'frequency_based' | 'ai_guided' | 'tie' | null;
+  };
+};
+
+export async function agingCompareFromBase64(
+  imageBase64: string,
+  mode: 'aging' | 'deaging',
+  intensity: number,
+  options?: {
+    landmarkBackend?: 'mediapipe' | 'dlib' | 'hybrid';
+  }
+): Promise<AgingCompareResult> {
+  const formData = new FormData();
+  formData.append('image', base64ToBlob(imageBase64), 'image.png');
+  formData.append('mode', mode);
+  formData.append('intensity', String(intensity));
+  formData.append('landmark_backend', options?.landmarkBackend ?? 'hybrid');
+  return requestJson('/api/aging/compare', formData);
+}
+
 export async function aiGuidedAgingFromBase64(
   imageBase64: string,
   mode: 'aging' | 'deaging',
