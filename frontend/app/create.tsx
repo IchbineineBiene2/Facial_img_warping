@@ -920,17 +920,25 @@ export default function CreateScreen() {
     setStatusMessage(`Landmark koordinatlari ${format.toUpperCase()} olarak indirildi.`);
   };
 
+  const WARP_OP_TO_PRO: Record<string, ProWarpOperation> = {
+    smile: 'smile_enhancement',
+    raise_eyebrows: 'brow_lift',
+    widen_lips: 'lip_plump',
+    slim_face: 'slim_face',
+  };
+
   const handleWarp = async () => {
     if (!preprocessedB64 || !landmarkCount) return;
     setWarpLoading(true);
     setWarpError(null);
     setWarpResultB64(null);
     try {
-      const data = await warpFromBase64(preprocessedB64, warpOp, warpIntensity);
+      const proOp = WARP_OP_TO_PRO[warpOp] ?? 'smile_enhancement';
+      const data = await warpProFromBase64(preprocessedB64, proOp, warpIntensity, 2.8, { landmarkBackend: 'hybrid' });
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
       setEvalMetrics(data.metrics ?? null);
-      setEvalSourceLabel(`Warp / ${warpOp}`);
+      setEvalSourceLabel(`Pro Warp / ${warpOp}`);
       setEvalResultB64(data.result_image_b64 ?? null);
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
@@ -967,7 +975,7 @@ export default function CreateScreen() {
       void runAgeAnalysis(transferData.result_image_b64, 'after', 'base64');
 
       try {
-        const baselineData = await warpFromBase64(preprocessedB64, 'widen_lips', expressionTransferIntensity);
+        const baselineData = await warpProFromBase64(preprocessedB64, 'lip_plump', expressionTransferIntensity, 2.8, { landmarkBackend: 'hybrid' });
         if (baselineData.success) {
           setManualLipWarpResultB64(baselineData.result_image_b64);
         } else {
@@ -995,11 +1003,13 @@ export default function CreateScreen() {
     setAiAgingResultB64(null);
     setAiAgingInfo(null);
     try {
-      const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
+      const data = await frequencyProFromBase64(preprocessedB64, mode, agingIntensity, { landmarkBackend: 'hybrid' });
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
+      setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
+      setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
       setEvalMetrics(data.metrics ?? null);
-      setEvalSourceLabel(mode === 'aging' ? 'Frequency / Aging' : 'Frequency / De-Aging');
+      setEvalSourceLabel(mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
       setEvalResultB64(data.result_image_b64 ?? null);
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
