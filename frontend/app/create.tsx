@@ -237,6 +237,7 @@ export default function CreateScreen() {
   const [aiAgingResultB64, setAiAgingResultB64] = useState<string | null>(null);
   const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; estimatedAgeAfter?: number; ageDelta?: number; targetAge?: number } | null>(null);
   const [agingComparison, setAgingComparison] = useState<AgingCompareResult['comparison'] | null>(null);
+  const [landmarkBackend, setLandmarkBackend] = useState<'mediapipe' | 'dlib' | 'hybrid'>('hybrid');
   const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(0.65);
@@ -934,7 +935,7 @@ export default function CreateScreen() {
     setWarpResultB64(null);
     try {
       const proOp = WARP_OP_TO_PRO[warpOp] ?? 'smile_enhancement';
-      const data = await warpProFromBase64(preprocessedB64, proOp, warpIntensity, 2.8, { landmarkBackend: 'hybrid' });
+      const data = await warpProFromBase64(preprocessedB64, proOp, warpIntensity, 2.8, { landmarkBackend });
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
       setEvalMetrics(data.metrics ?? null);
@@ -963,7 +964,7 @@ export default function CreateScreen() {
 
     try {
       const transferData = await transferExpressionFromBase64(preprocessedB64, referenceExpressionUri, expressionTransferIntensity, {
-        landmarkBackend: 'hybrid',
+        landmarkBackend,
       });
 
       if (!transferData.success) {
@@ -975,7 +976,7 @@ export default function CreateScreen() {
       void runAgeAnalysis(transferData.result_image_b64, 'after', 'base64');
 
       try {
-        const baselineData = await warpProFromBase64(preprocessedB64, 'lip_plump', expressionTransferIntensity, 2.8, { landmarkBackend: 'hybrid' });
+        const baselineData = await warpProFromBase64(preprocessedB64, 'lip_plump', expressionTransferIntensity, 2.8, { landmarkBackend });
         if (baselineData.success) {
           setManualLipWarpResultB64(baselineData.result_image_b64);
         } else {
@@ -1003,7 +1004,7 @@ export default function CreateScreen() {
     setAiAgingResultB64(null);
     setAiAgingInfo(null);
     try {
-      const data = await frequencyProFromBase64(preprocessedB64, mode, agingIntensity, { landmarkBackend: 'hybrid' });
+      const data = await frequencyProFromBase64(preprocessedB64, mode, agingIntensity, { landmarkBackend });
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
       setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
@@ -1039,7 +1040,7 @@ export default function CreateScreen() {
     setAgingError(null);
 
     try {
-      const data = await agingCompareFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend: 'hybrid' });
+      const data = await agingCompareFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend });
 
       if (!data.success) {
         throw new Error(data.message ?? 'Aging comparison failed');
@@ -1088,7 +1089,7 @@ export default function CreateScreen() {
     try {
       if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
         const data = await frequencyProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, {
-          landmarkBackend: 'hybrid',
+          landmarkBackend,
           temporalSmoothing: true,
           emaAlpha: 0.62,
           streamId: 'pro-ui',
@@ -1105,7 +1106,7 @@ export default function CreateScreen() {
         void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
       } else {
         const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
-          landmarkBackend: 'hybrid',
+          landmarkBackend,
           temporalSmoothing: true,
           emaAlpha: 0.62,
           streamId: 'pro-ui',
@@ -1465,6 +1466,35 @@ export default function CreateScreen() {
             <View style={styles.featureHeader}>
               <ThemedText type="subtitle" style={styles.panelTitle}>Kontrol Paneli</ThemedText>
               <ThemedText style={[styles.featureHeaderSub, { color: accent }]}>Gelişmiş Parametreler</ThemedText>
+            </View>
+
+            {/* Landmark model selector (FR-7.5) */}
+            <View style={{ marginBottom: 12 }}>
+              <ThemedText style={[styles.sliderLabel, { marginBottom: 6 }]}>Landmark Modeli</ThemedText>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {(['mediapipe', 'dlib', 'hybrid'] as const).map((opt) => (
+                  <Pressable
+                    key={opt}
+                    onPress={() => setLandmarkBackend(opt)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 7,
+                      borderRadius: 8,
+                      alignItems: 'center',
+                      backgroundColor: landmarkBackend === opt ? Colors[colorScheme].tint : softSurface,
+                      borderWidth: 1,
+                      borderColor: landmarkBackend === opt ? Colors[colorScheme].tint : panelBorder,
+                    }}>
+                    <ThemedText style={{
+                      fontSize: 11,
+                      fontWeight: landmarkBackend === opt ? '700' : '400',
+                      color: landmarkBackend === opt ? tintTextColor : colors.text,
+                    }}>
+                      {opt === 'mediapipe' ? 'MediaPipe' : opt === 'dlib' ? 'Dlib' : 'Hybrid'}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
             </View>
 
             {/* Section 1: Preprocessing */}
