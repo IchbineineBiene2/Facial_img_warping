@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const db = require('./db');
@@ -21,7 +22,7 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const respond = (res, data, meta = {}) =>
   res.json({
     ok: true,
-    source: 'SQLite',
+    source: 'PostgreSQL',
     timestamp: db.nowIso(),
     ...data,
     meta,
@@ -30,7 +31,7 @@ const respond = (res, data, meta = {}) =>
 const fail = (res, status, message, details) =>
   res.status(status).json({
     ok: false,
-    source: 'SQLite',
+    source: 'PostgreSQL',
     timestamp: db.nowIso(),
     error: message,
     details,
@@ -95,29 +96,24 @@ async function proxyToPython(path, req, res) {
   }
 }
 
-app.get('/api/health', (_req, res) => {
-  const counts = {
-    uploads: db.db.prepare('SELECT COUNT(*) AS count FROM uploads').get().count,
-    preprocessRuns: db.db.prepare('SELECT COUNT(*) AS count FROM preprocess_runs').get().count,
-    landmarkSets: db.db.prepare('SELECT COUNT(*) AS count FROM landmark_sets').get().count,
-    warpRuns: db.db.prepare('SELECT COUNT(*) AS count FROM warp_runs').get().count,
-    frequencyRuns: db.db.prepare('SELECT COUNT(*) AS count FROM frequency_runs').get().count,
-    evaluationRuns: db.db.prepare('SELECT COUNT(*) AS count FROM evaluation_runs').get().count,
-    exportRuns: db.db.prepare('SELECT COUNT(*) AS count FROM export_runs').get().count,
-  };
-
-  return respond(
-    res,
-    {
-      service: 'facial-warping-backend',
-      port: Number(PORT),
-      pythonService: PYTHON_SERVICE_URL,
-      database: db.dbFile,
-      modules: ['preprocess', 'landmarks', 'expression-transfer', 'warp', 'frequency', 'ai-aging', 'evaluation', 'export'],
-      counts,
-    },
-    { phase: 'sqlite-ready' }
-  );
+app.get('/api/health', async (_req, res) => {
+  try {
+    const counts = await db.getCounts();
+    return respond(
+      res,
+      {
+        service: 'facial-warping-backend',
+        port: Number(PORT),
+        pythonService: PYTHON_SERVICE_URL,
+        database: process.env.DATABASE_URL?.replace(/:.*@/, ':***@'),
+        modules: ['preprocess', 'landmarks', 'expression-transfer', 'warp', 'frequency', 'ai-aging', 'evaluation', 'export'],
+        counts,
+      },
+      { phase: 'postgres-ready' }
+    );
+  } catch (err) {
+    return fail(res, 503, 'Database connection failed.', { message: err.message });
+  }
 });
 
 // Proxy multipart image endpoints directly to the Python CV service.
@@ -134,8 +130,8 @@ app.post('/api/export/csv', (req, res) => proxyBinaryToPython('/export/csv', req
 app.post('/api/export/pdf', (req, res) => proxyBinaryToPython('/export/pdf', req, res));
 app.post('/api/report/export', (req, res) => proxyToPython('/report/export', req, res));
 
-app.post('/api/evaluation', (req, res) => {
-  const upload = resolveUploadOrFail(res, req.body);
+app.post('/api/evaluation', async (req, res) => {
+  const upload = await resolveUploadOrFail(res, req.body);
   if (!upload) return;
 
   const exp = clamp(Number(req.body?.expressionIntensity) || 0, 0, 100);
@@ -145,7 +141,7 @@ app.post('/api/evaluation', (req, res) => {
   const psnr = Number((42 - mse / 18).toFixed(2));
   const ssim = Number(Math.max(0.55, 0.97 - mse / 450).toFixed(3));
 
-  const evaluationRun = db.createEvaluationRun({ uploadId: upload.id, mse, psnr, ssim });
+  const evaluationRun = await db.createEvaluationRun({ uploadId: upload.id, mse, psnr, ssim });
 
   return respond(
     res,
@@ -163,8 +159,8 @@ app.post('/api/evaluation', (req, res) => {
   );
 });
 
-app.post('/api/export', (req, res) => {
-  const upload = resolveUploadOrFail(res, req.body);
+app.post('/api/export', async (req, res) => {
+  const upload = await resolveUploadOrFail(res, req.body);
   if (!upload) return;
 
   const { format = 'CSV', target = 'results' } = req.body || {};
@@ -173,7 +169,7 @@ app.post('/api/export', (req, res) => {
     return fail(res, 400, 'Gecersiz format.', { allowed: ['CSV', 'PDF'], received: format });
   }
 
-  const exportRun = db.createExportRun({
+  const exportRun = await db.createExportRun({
     uploadId: upload.id,
     format: fmt,
     target,
@@ -194,8 +190,8 @@ app.post('/api/export', (req, res) => {
   );
 });
 
-const resolveUploadOrFail = (res, body) => {
-  const upload = db.resolveUpload(body || {});
+const resolveUploadOrFail = async (res, body) => {
+  const upload = await db.resolveUpload(body || {});
   if (!upload) {
     fail(res, 400, 'Once bir gorsel yuklenmelidir.');
     return null;
