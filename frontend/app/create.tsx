@@ -31,12 +31,14 @@ import {
     exportEvaluationReportFromBase64,
     frequencyFromBase64,
     frequencyProFromBase64,
+    agingCompareFromBase64,
     aiGuidedAgingFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
   transferExpressionFromBase64,
     warpFromBase64,
     warpProFromBase64,
+    type AgingCompareResult,
     type ProMetrics,
     type ProWarpOperation
 } from '@/services/facial-api';
@@ -234,6 +236,7 @@ export default function CreateScreen() {
   const [aiAgingError, setAiAgingError] = useState<string | null>(null);
   const [aiAgingResultB64, setAiAgingResultB64] = useState<string | null>(null);
   const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; targetAge?: number } | null>(null);
+  const [agingComparison, setAgingComparison] = useState<AgingCompareResult['comparison'] | null>(null);
   const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(0.65);
@@ -1014,37 +1017,32 @@ export default function CreateScreen() {
     setAiAgingError(null);
     setAiAgingResultB64(null);
     setAiAgingInfo(null);
+    setAgingComparison(null);
     setAgingLoading(true);
     setAgingError(null);
 
     try {
-      const [frequencyData, aiData] = await Promise.all([
-        frequencyFromBase64(preprocessedB64, agingMode, agingIntensity),
-        aiGuidedAgingFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend: 'hybrid' }),
-      ]);
+      const data = await agingCompareFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend: 'hybrid' });
 
-      if (!frequencyData.success) {
-        throw new Error(frequencyData.message ?? 'Frequency aging failed');
-      }
-      if (!aiData.success) {
-        throw new Error(aiData.details ?? aiData.message ?? 'AI-guided aging failed');
+      if (!data.success) {
+        throw new Error(data.message ?? 'Aging comparison failed');
       }
 
-      setAgingResultB64(frequencyData.result_image_b64);
-      setAiAgingResultB64(aiData.result_image_b64);
+      setAgingResultB64(data.frequency_based.result_image_b64);
+      setAiAgingResultB64(data.ai_guided.result_image_b64 ?? null);
+      setAgingComparison(data.comparison);
       setAiAgingInfo({
-        model: aiData.model,
-        estimatedAgeBefore: aiData.estimated_age_before,
-        targetAge: aiData.target_age,
+        estimatedAgeBefore: data.age_estimation.before,
+        targetAge: data.age_estimation.after_ai ?? undefined,
       });
-      setEvalMetrics(aiData.metrics ?? frequencyData.metrics ?? null);
+      setEvalMetrics(data.ai_guided.metrics ?? data.frequency_based.metrics ?? null);
       setEvalSourceLabel(`AI Comparison / ${agingMode}`);
-      setEvalResultB64(aiData.result_image_b64 ?? frequencyData.result_image_b64 ?? null);
-      setProMetrics(aiData.metrics ?? null);
-      setSpectrumBeforeB64(aiData.spectrum_before_b64 ?? null);
-      setSpectrumAfterB64(aiData.spectrum_after_b64 ?? null);
+      setEvalResultB64(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64 ?? null);
+      setProMetrics(data.ai_guided.metrics ?? null);
+      setSpectrumBeforeB64(null);
+      setSpectrumAfterB64(null);
       setAgeAfter(null);
-      void runAgeAnalysis(aiData.result_image_b64, 'after', 'base64');
+      void runAgeAnalysis(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64, 'after', 'base64');
       setStatusMessage('AI destekli yaslandirma karsilastirmasi hazir.');
     } catch (e: any) {
       const message = e?.message ?? 'AI-guided aging comparison failed';
@@ -1732,6 +1730,39 @@ export default function CreateScreen() {
                       {aiAgingInfo.model ?? 'AI model'}: {aiAgingInfo.estimatedAgeBefore ?? '?'} -&gt; {aiAgingInfo.targetAge ?? '?'}
                     </ThemedText>
                   ) : null}
+                </View>
+              </View>
+            ) : null}
+            {agingComparison ? (
+              <View style={styles.winnerCard}>
+                <View style={styles.winnerHeader}>
+                  <ThemedText style={styles.winnerTitle}>
+                    {agingComparison.winner === 'ai_guided'
+                      ? '🏆 AI Guided kazandı'
+                      : agingComparison.winner === 'frequency_based'
+                      ? '🏆 Frequency Based kazandı'
+                      : '🤝 Berabere'}
+                  </ThemedText>
+                </View>
+                <View style={styles.winnerMetrics}>
+                  <View style={styles.winnerMetricItem}>
+                    <ThemedText style={styles.winnerMetricLabel}>SSIM farkı</ThemedText>
+                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.ssim_delta ?? 0) >= 0 ? '#4ade80' : '#f87171' }]}>
+                      {agingComparison.ssim_delta != null ? `${agingComparison.ssim_delta > 0 ? '+' : ''}${agingComparison.ssim_delta.toFixed(4)}` : '-'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.winnerMetricItem}>
+                    <ThemedText style={styles.winnerMetricLabel}>PSNR farkı</ThemedText>
+                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.psnr_delta ?? 0) >= 0 ? '#4ade80' : '#f87171' }]}>
+                      {agingComparison.psnr_delta != null ? `${agingComparison.psnr_delta > 0 ? '+' : ''}${agingComparison.psnr_delta.toFixed(3)} dB` : '-'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.winnerMetricItem}>
+                    <ThemedText style={styles.winnerMetricLabel}>MSE farkı</ThemedText>
+                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.mse_delta ?? 0) <= 0 ? '#4ade80' : '#f87171' }]}>
+                      {agingComparison.mse_delta != null ? `${agingComparison.mse_delta > 0 ? '+' : ''}${agingComparison.mse_delta.toFixed(5)}` : '-'}
+                    </ThemedText>
+                  </View>
                 </View>
               </View>
             ) : null}
@@ -2881,6 +2912,39 @@ const styles = StyleSheet.create({
   agingRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  winnerCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(250,204,21,0.35)',
+    backgroundColor: 'rgba(250,204,21,0.07)',
+    padding: 14,
+    marginTop: 10,
+    gap: 10,
+  },
+  winnerHeader: {
+    alignItems: 'center',
+  },
+  winnerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  winnerMetrics: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  winnerMetricItem: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  winnerMetricLabel: {
+    fontSize: 11,
+    opacity: 0.6,
+  },
+  winnerMetricValue: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   metricsCard: {
     borderRadius: 16,

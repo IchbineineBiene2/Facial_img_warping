@@ -307,6 +307,7 @@ export async function frequencyProFromBase64(
 
 export type AgingCompareResult = {
   success: boolean;
+  message?: string;
   mode: 'aging' | 'deaging';
   intensity: number;
   age_estimation: {
