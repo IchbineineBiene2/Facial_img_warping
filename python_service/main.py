@@ -274,7 +274,7 @@ async def warp(
     intensity: float = Form(0.5),
 ):
     try:
-        intensity = float(np.clip(intensity, 0.0, 1.0))
+        requested_intensity = float(np.clip(intensity, 0.0, 1.0))
         file_bytes = await image.read()
         img = bytes_to_numpy(file_bytes)
 
@@ -292,13 +292,24 @@ async def warp(
         if operation not in ops:
             return {"error": "Face not detected or model error", "details": f"Unknown operation '{operation}'. Valid: {list(ops.keys())}"}
 
-        result_img = ops[operation](img, lms, intensity)
+        # Operation-specific caps reduce common artifacts at high intensity values.
+        intensity_caps = {
+            "smile": 1.0,
+            "raise_eyebrows": 0.72,
+            "widen_lips": 0.78,
+            "slim_face": 0.68,
+        }
+        applied_intensity = float(min(requested_intensity, intensity_caps.get(operation, 1.0)))
+
+        result_img = ops[operation](img, lms, applied_intensity)
         lms_after = detect_landmarks(result_img) or lms
         metrics = evaluate_metrics(img, result_img)
 
         return {
             "success": True,
             "operation": operation,
+            "requested_intensity": requested_intensity,
+            "applied_intensity": applied_intensity,
             "result_image_b64": numpy_to_b64(result_img),
             "metrics": metrics,
             "landmarks_before": [[x, y] for x, y in lms],
