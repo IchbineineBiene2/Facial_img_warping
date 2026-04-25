@@ -180,12 +180,16 @@ async def ai_guided_aging(
         else:
             return {"success": False, "message": "Unknown mode. Valid: aging, deaging"}
 
+        estimated_age_after, _ = _estimate_age_from_image(out["result_image"])
+
         return {
             "success": True,
             "mode": mode,
             "model": "landmark-guided aging" if not age_detected else "DeepFace-guided aging",
             "age_detection": "deepface" if age_detected else "fallback",
             "estimated_age_before": estimated_age,
+            "estimated_age_after": estimated_age_after,
+            "age_delta": estimated_age_after - estimated_age,
             "target_age": target_age,
             "guided_intensity": guided_intensity,
             "landmark_info": landmark_info,
@@ -594,6 +598,8 @@ async def frequency_pro(
         if lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected."}
 
+        age_before, age_detected = _estimate_age_from_image(img)
+
         if mode == "aging":
             out = aging_pro(img, lms, intensity=intensity)
         elif mode == "deaging":
@@ -604,11 +610,17 @@ async def frequency_pro(
                 "details": f"Unknown mode '{mode}'. Valid: aging, deaging",
             }
 
+        age_after, _ = _estimate_age_from_image(out["result_image"])
+
         return {
             "success": True,
             "mode": mode,
             "intensity": intensity,
             "landmark_info": landmark_info,
+            "estimated_age_before": age_before,
+            "estimated_age_after": age_after,
+            "age_delta": age_after - age_before,
+            "age_detection": "deepface" if age_detected else "fallback",
             "result_image_b64": numpy_to_b64(out["result_image"]),
             "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
             "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),

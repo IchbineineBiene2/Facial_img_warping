@@ -235,7 +235,7 @@ export default function CreateScreen() {
   const [aiAgingLoading, setAiAgingLoading] = useState(false);
   const [aiAgingError, setAiAgingError] = useState<string | null>(null);
   const [aiAgingResultB64, setAiAgingResultB64] = useState<string | null>(null);
-  const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; targetAge?: number } | null>(null);
+  const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; estimatedAgeAfter?: number; ageDelta?: number; targetAge?: number } | null>(null);
   const [agingComparison, setAgingComparison] = useState<AgingCompareResult['comparison'] | null>(null);
   const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
@@ -1011,6 +1011,13 @@ export default function CreateScreen() {
       setEvalMetrics(data.metrics ?? null);
       setEvalSourceLabel(mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
       setEvalResultB64(data.result_image_b64 ?? null);
+      if (data.estimated_age_before != null) {
+        setAiAgingInfo({
+          estimatedAgeBefore: data.estimated_age_before,
+          estimatedAgeAfter: data.estimated_age_after,
+          ageDelta: data.age_delta,
+        });
+      }
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (e: any) {
@@ -1043,7 +1050,10 @@ export default function CreateScreen() {
       setAgingComparison(data.comparison);
       setAiAgingInfo({
         estimatedAgeBefore: data.age_estimation.before,
-        targetAge: data.age_estimation.after_ai ?? undefined,
+        estimatedAgeAfter: data.age_estimation.after_ai ?? undefined,
+        ageDelta: data.age_estimation.after_ai != null
+          ? data.age_estimation.after_ai - data.age_estimation.before
+          : undefined,
       });
       setEvalMetrics(data.ai_guided.metrics ?? data.frequency_based.metrics ?? null);
       setEvalSourceLabel(`AI Comparison / ${agingMode}`);
@@ -1719,6 +1729,14 @@ export default function CreateScreen() {
                   <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${agingResultB64}`)}>
                     <Image source={{ uri: `data:image/png;base64,${agingResultB64}` }} style={styles.sideImage} contentFit="contain" />
                   </Pressable>
+                  {aiAgingInfo?.estimatedAgeBefore != null && aiAgingInfo?.estimatedAgeAfter != null ? (
+                    <ThemedText style={styles.helperText}>
+                      {aiAgingInfo.estimatedAgeBefore} yaş → {aiAgingInfo.estimatedAgeAfter} yaş
+                      {aiAgingInfo.ageDelta != null
+                        ? `  (${aiAgingInfo.ageDelta > 0 ? '+' : ''}${aiAgingInfo.ageDelta})`
+                        : ''}
+                    </ThemedText>
+                  ) : null}
                 </View>
               </View>
             ) : null}
@@ -1735,9 +1753,12 @@ export default function CreateScreen() {
                   <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${aiAgingResultB64}`)}>
                     <Image source={{ uri: `data:image/png;base64,${aiAgingResultB64}` }} style={styles.sideImage} contentFit="contain" />
                   </Pressable>
-                  {aiAgingInfo ? (
+                  {aiAgingInfo?.estimatedAgeBefore != null ? (
                     <ThemedText style={styles.helperText}>
-                      {aiAgingInfo.model ?? 'AI model'}: {aiAgingInfo.estimatedAgeBefore ?? '?'} -&gt; {aiAgingInfo.targetAge ?? '?'}
+                      {aiAgingInfo.estimatedAgeBefore} yaş → {aiAgingInfo.estimatedAgeAfter ?? '?'} yaş
+                      {aiAgingInfo.ageDelta != null
+                        ? `  (${aiAgingInfo.ageDelta > 0 ? '+' : ''}${aiAgingInfo.ageDelta})`
+                        : ''}
                     </ThemedText>
                   ) : null}
                 </View>
