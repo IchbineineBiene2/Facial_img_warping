@@ -500,10 +500,14 @@ async def aging_compare(
             else:
                 ai_out = de_aging_pro(img, lms, intensity=intensity)
             ai_result_img = ai_out["result_image"]
+            # ai_out["metrics"] uses raw 0-255 scale; keep it for the detailed response
+            # but also compute normalized metrics for an apples-to-apples comparison.
             ai_metrics = ai_out["metrics"]
+            ai_metrics_normalized = evaluate_metrics(img, ai_result_img)
         else:
             ai_result_img = img
             ai_metrics = {"mse": 0.0, "psnr": 0.0, "ssim": 1.0}
+            ai_metrics_normalized = ai_metrics
 
         # --- Age estimation (best-effort) ---
         estimated_age_before, age_detected = _estimate_age_from_image(img)
@@ -512,7 +516,7 @@ async def aging_compare(
         if ai_success:
             estimated_age_after_ai, _ = _estimate_age_from_image(ai_result_img)
 
-        # --- Comparison deltas (freq vs ai) ---
+        # --- Comparison deltas (freq vs ai, both on normalized 0-1 scale) ---
         def _safe_delta(a, b):
             try:
                 return round(float(a) - float(b), 6)
@@ -520,14 +524,15 @@ async def aging_compare(
                 return None
 
         comparison = {
-            "mse_delta":  _safe_delta(ai_metrics.get("mse"),  freq_metrics.get("mse")),
-            "psnr_delta": _safe_delta(ai_metrics.get("psnr"), freq_metrics.get("psnr")),
-            "ssim_delta": _safe_delta(ai_metrics.get("ssim"), freq_metrics.get("ssim")),
+            "note": "Deltas use normalized [0-1] MSE/PSNR scale for fair comparison",
+            "mse_delta":  _safe_delta(ai_metrics_normalized.get("mse"),  freq_metrics.get("mse")),
+            "psnr_delta": _safe_delta(ai_metrics_normalized.get("psnr"), freq_metrics.get("psnr")),
+            "ssim_delta": _safe_delta(ai_metrics_normalized.get("ssim"), freq_metrics.get("ssim")),
             "winner": None,
         }
         try:
             freq_ssim = float(freq_metrics.get("ssim", 0))
-            ai_ssim   = float(ai_metrics.get("ssim", 0))
+            ai_ssim   = float(ai_metrics_normalized.get("ssim", 0))
             if abs(freq_ssim - ai_ssim) < 0.005:
                 comparison["winner"] = "tie"
             elif ai_ssim > freq_ssim:
