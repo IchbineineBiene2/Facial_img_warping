@@ -41,7 +41,7 @@ from utils.image_utils import b64_to_numpy, bytes_to_numpy, numpy_to_b64
 warn_missing_ai_dependencies()
 
 
-def _estimate_age_from_image(img: np.ndarray) -> int:
+def _estimate_age_from_image(img: np.ndarray) -> float:
     if DeepFace is None:
         raise RuntimeError(
             "DeepFace is not installed. Add it to python_service/requirements.txt or use a lighter age model backend."
@@ -66,7 +66,8 @@ def _estimate_age_from_image(img: np.ndarray) -> int:
     if estimated_age is None:
         raise RuntimeError("Age estimation failed for the provided image.")
 
-    return int(round(float(estimated_age)))
+    # Keep one decimal so subtle changes after transformations remain visible.
+    return float(round(float(estimated_age), 1))
 
 app = FastAPI(title="Facial CV Service")
 

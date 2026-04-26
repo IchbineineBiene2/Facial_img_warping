@@ -5,6 +5,7 @@ opencv-python-headless==4.10.0.84
 mediapipe==0.10.33
 numpy>=2.1
 scipy>=1.14
+PyWavelets>=1.6.0
 scikit-image>=0.24.0
 Pillow>=10.4.0
 deepface>=0.0.93
