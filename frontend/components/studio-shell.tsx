@@ -1,4 +1,4 @@
-import { Animated, Easing, StyleSheet, View, type ViewProps } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, View, type ViewProps } from 'react-native';
 import { useEffect, useRef } from 'react';
 
 import { SideNav } from '@/components/side-nav';
@@ -101,11 +101,14 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     flexDirection: 'row',
+    height: Platform.OS === 'web' ? ('100vh' as any) : '100%',
     overflow: 'hidden',
   },
   body: {
     flex: 1,
+    height: '100%',
     zIndex: 1,
+    overflow: 'hidden',
   },
   blob: {
     position: 'absolute',

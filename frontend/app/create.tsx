@@ -1330,7 +1330,7 @@ export default function CreateScreen() {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <View style={styles.content}>
         <View style={[styles.workspace, isWide && styles.workspaceWide]}>
           <View
             style={[
@@ -1444,6 +1444,10 @@ export default function CreateScreen() {
                 borderColor: panelBorder,
               },
             ]}>
+            <ScrollView
+              style={styles.featurePanelScroller}
+              contentContainerStyle={styles.featurePanelContent}
+              showsVerticalScrollIndicator>
             <View style={styles.featureHeader}>
               <ThemedText type="subtitle" style={styles.panelTitle}>Kontrol Paneli</ThemedText>
               <ThemedText style={[styles.featureHeaderSub, { color: accent }]}>Gelişmiş Parametreler</ThemedText>
@@ -1944,9 +1948,10 @@ export default function CreateScreen() {
                 <ThemedText style={[styles.cvButtonText, { color: colorScheme === 'dark' ? '#000' : '#fff' }]}>PDF Export</ThemedText>
               </Pressable>
             </View>
+            </ScrollView>
           </View>
         </View>
-      </ScrollView>
+      </View>
       </View>
 
       <Modal visible={!!lightboxUri} animationType="fade" transparent onRequestClose={() => setLightboxUri(null)}>
@@ -2133,6 +2138,8 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     flex: 1,
+    height: '100%',
+    overflow: 'hidden',
   },
   backButton: {
     width: 42,
@@ -2195,16 +2202,19 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   content: {
-    flexGrow: 1,
+    flex: 1,
     paddingHorizontal: 28,
-    paddingBottom: 48,
+    paddingBottom: 28,
     paddingTop: 0,
+    overflow: 'hidden',
   },
   workspace: {
+    flex: 1,
     gap: 18,
     width: '100%',
     alignSelf: 'center',
     maxWidth: 1440,
+    overflow: 'hidden',
   },
   workspaceWide: {
     flexDirection: 'row',
@@ -2233,6 +2243,17 @@ const styles = StyleSheet.create({
   featurePanel: {
     flex: 1.04,
     minWidth: 300,
+    height: '100%',
+    maxHeight: '100%' as any,
+    overflow: 'hidden',
+  },
+  featurePanelScroller: {
+    flex: 1,
+    ...(Platform.OS === 'web' ? ({ overflowY: 'auto' } as any) : null),
+  },
+  featurePanelContent: {
+    gap: 16,
+    paddingRight: 4,
   },
   panelTitleRow: {
     flexDirection: 'row',
