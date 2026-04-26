@@ -48,3 +48,12 @@ app-example
 # generated native folders
 /ios
 /android
+# Python virtual environments
+venv/
+.venv/
+python_service/venv/
+python_service/.venv/
+
+# Codex logs
+.codex-logs/
+*.log
