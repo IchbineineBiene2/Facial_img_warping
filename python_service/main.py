@@ -180,12 +180,16 @@ async def ai_guided_aging(
         else:
             return {"success": False, "message": "Unknown mode. Valid: aging, deaging"}
 
+        estimated_age_after, _ = _estimate_age_from_image(out["result_image"])
+
         return {
             "success": True,
             "mode": mode,
             "model": "landmark-guided aging" if not age_detected else "DeepFace-guided aging",
             "age_detection": "deepface" if age_detected else "fallback",
             "estimated_age_before": estimated_age,
+            "estimated_age_after": estimated_age_after,
+            "age_delta": estimated_age_after - estimated_age,
             "target_age": target_age,
             "guided_intensity": guided_intensity,
             "landmark_info": landmark_info,
@@ -460,6 +464,114 @@ async def report_export(
     }
 
 
+@app.post("/aging/compare")
+async def aging_compare(
+    image: UploadFile = File(...),
+    mode: str = Form("aging"),
+    intensity: float = Form(0.6),
+    landmark_backend: str = Form("hybrid"),
+):
+    """
+    Runs both frequency-based and AI-guided aging on the same image and returns
+    both results with metrics so the caller can show a side-by-side comparison.
+    Satisfies FR-4.6 and FR-7.4.
+    """
+    try:
+        intensity = float(np.clip(intensity, 0.0, 1.0))
+        if mode not in ("aging", "deaging"):
+            return {"success": False, "message": "Unknown mode. Valid: aging, deaging"}
+
+        file_bytes = await image.read()
+        valid, err = validate_image(file_bytes, image.filename or "upload.jpg")
+        if not valid:
+            return {"success": False, "message": err}
+
+        img = bytes_to_numpy(file_bytes)
+
+        # --- Frequency-based branch ---
+        if mode == "aging":
+            freq_result_img = apply_aging(img, intensity)
+        else:
+            freq_result_img = apply_deaging(img, intensity)
+        freq_metrics = evaluate_metrics(img, freq_result_img)
+
+        # --- AI-guided branch ---
+        lms, landmark_info = detect_landmarks_fused(img, backend=landmark_backend, temporal_smoothing=False)
+        ai_success = lms is not None
+        if ai_success:
+            if mode == "aging":
+                ai_out = aging_pro(img, lms, intensity=intensity)
+            else:
+                ai_out = de_aging_pro(img, lms, intensity=intensity)
+            ai_result_img = ai_out["result_image"]
+            # ai_out["metrics"] uses raw 0-255 scale; keep it for the detailed response
+            # but also compute normalized metrics for an apples-to-apples comparison.
+            ai_metrics = ai_out["metrics"]
+            ai_metrics_normalized = evaluate_metrics(img, ai_result_img)
+        else:
+            ai_result_img = img
+            ai_metrics = {"mse": 0.0, "psnr": 0.0, "ssim": 1.0}
+            ai_metrics_normalized = ai_metrics
+
+        # --- Age estimation (best-effort) ---
+        estimated_age_before, age_detected = _estimate_age_from_image(img)
+        estimated_age_after_freq, _ = _estimate_age_from_image(freq_result_img)
+        estimated_age_after_ai = None
+        if ai_success:
+            estimated_age_after_ai, _ = _estimate_age_from_image(ai_result_img)
+
+        # --- Comparison deltas (freq vs ai, both on normalized 0-1 scale) ---
+        def _safe_delta(a, b):
+            try:
+                return round(float(a) - float(b), 6)
+            except Exception:
+                return None
+
+        comparison = {
+            "note": "Deltas use normalized [0-1] MSE/PSNR scale for fair comparison",
+            "mse_delta":  _safe_delta(ai_metrics_normalized.get("mse"),  freq_metrics.get("mse")),
+            "psnr_delta": _safe_delta(ai_metrics_normalized.get("psnr"), freq_metrics.get("psnr")),
+            "ssim_delta": _safe_delta(ai_metrics_normalized.get("ssim"), freq_metrics.get("ssim")),
+            "winner": None,
+        }
+        try:
+            freq_ssim = float(freq_metrics.get("ssim", 0))
+            ai_ssim   = float(ai_metrics_normalized.get("ssim", 0))
+            if abs(freq_ssim - ai_ssim) < 0.005:
+                comparison["winner"] = "tie"
+            elif ai_ssim > freq_ssim:
+                comparison["winner"] = "ai_guided"
+            else:
+                comparison["winner"] = "frequency_based"
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "mode": mode,
+            "intensity": intensity,
+            "age_estimation": {
+                "before": estimated_age_before,
+                "detected": age_detected,
+                "after_frequency": estimated_age_after_freq,
+                "after_ai": estimated_age_after_ai,
+            },
+            "frequency_based": {
+                "result_image_b64": numpy_to_b64(freq_result_img),
+                "metrics": freq_metrics,
+            },
+            "ai_guided": {
+                "success": ai_success,
+                "landmark_info": landmark_info if ai_success else None,
+                "result_image_b64": numpy_to_b64(ai_result_img) if ai_success else None,
+                "metrics": ai_metrics,
+            },
+            "comparison": comparison,
+        }
+    except Exception as exc:
+        return {"success": False, "message": str(exc)}
+
+
 @app.post("/frequency/pro")
 async def frequency_pro(
     image: UploadFile = File(...),
@@ -486,6 +598,8 @@ async def frequency_pro(
         if lms is None:
             return {"error": "Face not detected or model error", "details": "No face detected."}
 
+        age_before, age_detected = _estimate_age_from_image(img)
+
         if mode == "aging":
             out = aging_pro(img, lms, intensity=intensity)
         elif mode == "deaging":
@@ -496,11 +610,17 @@ async def frequency_pro(
                 "details": f"Unknown mode '{mode}'. Valid: aging, deaging",
             }
 
+        age_after, _ = _estimate_age_from_image(out["result_image"])
+
         return {
             "success": True,
             "mode": mode,
             "intensity": intensity,
             "landmark_info": landmark_info,
+            "estimated_age_before": age_before,
+            "estimated_age_after": age_after,
+            "age_delta": age_after - age_before,
+            "age_detection": "deepface" if age_detected else "fallback",
             "result_image_b64": numpy_to_b64(out["result_image"]),
             "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
             "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),

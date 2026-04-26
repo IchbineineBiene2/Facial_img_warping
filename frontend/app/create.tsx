@@ -31,12 +31,14 @@ import {
     exportEvaluationReportFromBase64,
     frequencyFromBase64,
     frequencyProFromBase64,
+    agingCompareFromBase64,
     aiGuidedAgingFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
   transferExpressionFromBase64,
     warpFromBase64,
     warpProFromBase64,
+    type AgingCompareResult,
     type ProMetrics,
     type ProWarpOperation
 } from '@/services/facial-api';
@@ -233,7 +235,9 @@ export default function CreateScreen() {
   const [aiAgingLoading, setAiAgingLoading] = useState(false);
   const [aiAgingError, setAiAgingError] = useState<string | null>(null);
   const [aiAgingResultB64, setAiAgingResultB64] = useState<string | null>(null);
-  const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; targetAge?: number } | null>(null);
+  const [aiAgingInfo, setAiAgingInfo] = useState<{ model?: string; estimatedAgeBefore?: number; estimatedAgeAfter?: number; ageDelta?: number; targetAge?: number } | null>(null);
+  const [agingComparison, setAgingComparison] = useState<AgingCompareResult['comparison'] | null>(null);
+  const [landmarkBackend, setLandmarkBackend] = useState<'mediapipe' | 'dlib' | 'hybrid'>('hybrid');
   const [proOperation, setProOperation] = useState<ProOperation>('smile_enhancement');
   const [proPreset, setProPreset] = useState<ProPreset>('balanced');
   const [proIntensity, setProIntensity] = useState(0.65);
@@ -917,17 +921,25 @@ export default function CreateScreen() {
     setStatusMessage(`Landmark koordinatlari ${format.toUpperCase()} olarak indirildi.`);
   };
 
+  const WARP_OP_TO_PRO: Record<string, ProWarpOperation> = {
+    smile: 'smile_enhancement',
+    raise_eyebrows: 'brow_lift',
+    widen_lips: 'lip_plump',
+    slim_face: 'slim_face',
+  };
+
   const handleWarp = async () => {
     if (!preprocessedB64 || !landmarkCount) return;
     setWarpLoading(true);
     setWarpError(null);
     setWarpResultB64(null);
     try {
-      const data = await warpFromBase64(preprocessedB64, warpOp, warpIntensity);
+      const proOp = WARP_OP_TO_PRO[warpOp] ?? 'smile_enhancement';
+      const data = await warpProFromBase64(preprocessedB64, proOp, warpIntensity, 2.8, { landmarkBackend });
       if (!data.success) throw new Error(data.message ?? 'Warp failed');
       setWarpResultB64(data.result_image_b64);
       setEvalMetrics(data.metrics ?? null);
-      setEvalSourceLabel(`Warp / ${warpOp}`);
+      setEvalSourceLabel(`Pro Warp / ${warpOp}`);
       setEvalResultB64(data.result_image_b64 ?? null);
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
@@ -952,7 +964,7 @@ export default function CreateScreen() {
 
     try {
       const transferData = await transferExpressionFromBase64(preprocessedB64, referenceExpressionUri, expressionTransferIntensity, {
-        landmarkBackend: 'hybrid',
+        landmarkBackend,
       });
 
       if (!transferData.success) {
@@ -964,7 +976,7 @@ export default function CreateScreen() {
       void runAgeAnalysis(transferData.result_image_b64, 'after', 'base64');
 
       try {
-        const baselineData = await warpFromBase64(preprocessedB64, 'widen_lips', expressionTransferIntensity);
+        const baselineData = await warpProFromBase64(preprocessedB64, 'lip_plump', expressionTransferIntensity, 2.8, { landmarkBackend });
         if (baselineData.success) {
           setManualLipWarpResultB64(baselineData.result_image_b64);
         } else {
@@ -992,12 +1004,21 @@ export default function CreateScreen() {
     setAiAgingResultB64(null);
     setAiAgingInfo(null);
     try {
-      const data = await frequencyFromBase64(preprocessedB64, mode, agingIntensity);
+      const data = await frequencyProFromBase64(preprocessedB64, mode, agingIntensity, { landmarkBackend });
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
+      setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
+      setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
       setEvalMetrics(data.metrics ?? null);
-      setEvalSourceLabel(mode === 'aging' ? 'Frequency / Aging' : 'Frequency / De-Aging');
+      setEvalSourceLabel(mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
       setEvalResultB64(data.result_image_b64 ?? null);
+      if (data.estimated_age_before != null) {
+        setAiAgingInfo({
+          estimatedAgeBefore: data.estimated_age_before,
+          estimatedAgeAfter: data.estimated_age_after,
+          ageDelta: data.age_delta,
+        });
+      }
       setAgeAfter(null);
       void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
     } catch (e: any) {
@@ -1014,37 +1035,35 @@ export default function CreateScreen() {
     setAiAgingError(null);
     setAiAgingResultB64(null);
     setAiAgingInfo(null);
+    setAgingComparison(null);
     setAgingLoading(true);
     setAgingError(null);
 
     try {
-      const [frequencyData, aiData] = await Promise.all([
-        frequencyFromBase64(preprocessedB64, agingMode, agingIntensity),
-        aiGuidedAgingFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend: 'hybrid' }),
-      ]);
+      const data = await agingCompareFromBase64(preprocessedB64, agingMode, agingIntensity, { landmarkBackend });
 
-      if (!frequencyData.success) {
-        throw new Error(frequencyData.message ?? 'Frequency aging failed');
-      }
-      if (!aiData.success) {
-        throw new Error(aiData.details ?? aiData.message ?? 'AI-guided aging failed');
+      if (!data.success) {
+        throw new Error(data.message ?? 'Aging comparison failed');
       }
 
-      setAgingResultB64(frequencyData.result_image_b64);
-      setAiAgingResultB64(aiData.result_image_b64);
+      setAgingResultB64(data.frequency_based.result_image_b64);
+      setAiAgingResultB64(data.ai_guided.result_image_b64 ?? null);
+      setAgingComparison(data.comparison);
       setAiAgingInfo({
-        model: aiData.model,
-        estimatedAgeBefore: aiData.estimated_age_before,
-        targetAge: aiData.target_age,
+        estimatedAgeBefore: data.age_estimation.before,
+        estimatedAgeAfter: data.age_estimation.after_ai ?? undefined,
+        ageDelta: data.age_estimation.after_ai != null
+          ? data.age_estimation.after_ai - data.age_estimation.before
+          : undefined,
       });
-      setEvalMetrics(aiData.metrics ?? frequencyData.metrics ?? null);
+      setEvalMetrics(data.ai_guided.metrics ?? data.frequency_based.metrics ?? null);
       setEvalSourceLabel(`AI Comparison / ${agingMode}`);
-      setEvalResultB64(aiData.result_image_b64 ?? frequencyData.result_image_b64 ?? null);
-      setProMetrics(aiData.metrics ?? null);
-      setSpectrumBeforeB64(aiData.spectrum_before_b64 ?? null);
-      setSpectrumAfterB64(aiData.spectrum_after_b64 ?? null);
+      setEvalResultB64(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64 ?? null);
+      setProMetrics(data.ai_guided.metrics ?? null);
+      setSpectrumBeforeB64(null);
+      setSpectrumAfterB64(null);
       setAgeAfter(null);
-      void runAgeAnalysis(aiData.result_image_b64, 'after', 'base64');
+      void runAgeAnalysis(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64, 'after', 'base64');
       setStatusMessage('AI destekli yaslandirma karsilastirmasi hazir.');
     } catch (e: any) {
       const message = e?.message ?? 'AI-guided aging comparison failed';
@@ -1070,7 +1089,7 @@ export default function CreateScreen() {
     try {
       if (effectiveOperation === 'aging' || effectiveOperation === 'deaging') {
         const data = await frequencyProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, {
-          landmarkBackend: 'hybrid',
+          landmarkBackend,
           temporalSmoothing: true,
           emaAlpha: 0.62,
           streamId: 'pro-ui',
@@ -1087,7 +1106,7 @@ export default function CreateScreen() {
         void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
       } else {
         const data = await warpProFromBase64(preprocessedB64, effectiveOperation, effectiveIntensity, effectiveRbfSmooth, {
-          landmarkBackend: 'hybrid',
+          landmarkBackend,
           temporalSmoothing: true,
           emaAlpha: 0.62,
           streamId: 'pro-ui',
@@ -1453,6 +1472,35 @@ export default function CreateScreen() {
               <ThemedText style={[styles.featureHeaderSub, { color: accent }]}>Gelişmiş Parametreler</ThemedText>
             </View>
 
+            {/* Landmark model selector (FR-7.5) */}
+            <View style={{ marginBottom: 12 }}>
+              <ThemedText style={[styles.sliderLabel, { marginBottom: 6 }]}>Landmark Modeli</ThemedText>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {(['mediapipe', 'dlib', 'hybrid'] as const).map((opt) => (
+                  <Pressable
+                    key={opt}
+                    onPress={() => setLandmarkBackend(opt)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 7,
+                      borderRadius: 8,
+                      alignItems: 'center',
+                      backgroundColor: landmarkBackend === opt ? Colors[colorScheme].tint : softSurface,
+                      borderWidth: 1,
+                      borderColor: landmarkBackend === opt ? Colors[colorScheme].tint : panelBorder,
+                    }}>
+                    <ThemedText style={{
+                      fontSize: 11,
+                      fontWeight: landmarkBackend === opt ? '700' : '400',
+                      color: landmarkBackend === opt ? tintTextColor : colors.text,
+                    }}>
+                      {opt === 'mediapipe' ? 'MediaPipe' : opt === 'dlib' ? 'Dlib' : 'Hybrid'}
+                    </ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
             {/* Section 1: Preprocessing */}
             <View style={styles.sectionHeader}>
               <View style={[styles.stepBadge, { backgroundColor: accent }]}><Text style={styles.stepBadgeText}>1</Text></View>
@@ -1715,6 +1763,14 @@ export default function CreateScreen() {
                   <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${agingResultB64}`)}>
                     <Image source={{ uri: `data:image/png;base64,${agingResultB64}` }} style={styles.sideImage} contentFit="contain" />
                   </Pressable>
+                  {aiAgingInfo?.estimatedAgeBefore != null && aiAgingInfo?.estimatedAgeAfter != null ? (
+                    <ThemedText style={styles.helperText}>
+                      {aiAgingInfo.estimatedAgeBefore} yaş → {aiAgingInfo.estimatedAgeAfter} yaş
+                      {aiAgingInfo.ageDelta != null
+                        ? `  (${aiAgingInfo.ageDelta > 0 ? '+' : ''}${aiAgingInfo.ageDelta})`
+                        : ''}
+                    </ThemedText>
+                  ) : null}
                 </View>
               </View>
             ) : null}
@@ -1731,11 +1787,47 @@ export default function CreateScreen() {
                   <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${aiAgingResultB64}`)}>
                     <Image source={{ uri: `data:image/png;base64,${aiAgingResultB64}` }} style={styles.sideImage} contentFit="contain" />
                   </Pressable>
-                  {aiAgingInfo ? (
+                  {aiAgingInfo?.estimatedAgeBefore != null ? (
                     <ThemedText style={styles.helperText}>
-                      {aiAgingInfo.model ?? 'AI model'}: {aiAgingInfo.estimatedAgeBefore ?? '?'} -&gt; {aiAgingInfo.targetAge ?? '?'}
+                      {aiAgingInfo.estimatedAgeBefore} yaş → {aiAgingInfo.estimatedAgeAfter ?? '?'} yaş
+                      {aiAgingInfo.ageDelta != null
+                        ? `  (${aiAgingInfo.ageDelta > 0 ? '+' : ''}${aiAgingInfo.ageDelta})`
+                        : ''}
                     </ThemedText>
                   ) : null}
+                </View>
+              </View>
+            ) : null}
+            {agingComparison ? (
+              <View style={styles.winnerCard}>
+                <View style={styles.winnerHeader}>
+                  <ThemedText style={styles.winnerTitle}>
+                    {agingComparison.winner === 'ai_guided'
+                      ? '🏆 AI Guided kazandı'
+                      : agingComparison.winner === 'frequency_based'
+                      ? '🏆 Frequency Based kazandı'
+                      : '🤝 Berabere'}
+                  </ThemedText>
+                </View>
+                <View style={styles.winnerMetrics}>
+                  <View style={styles.winnerMetricItem}>
+                    <ThemedText style={styles.winnerMetricLabel}>SSIM farkı</ThemedText>
+                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.ssim_delta ?? 0) >= 0 ? '#4ade80' : '#f87171' }]}>
+                      {agingComparison.ssim_delta != null ? `${agingComparison.ssim_delta > 0 ? '+' : ''}${agingComparison.ssim_delta.toFixed(4)}` : '-'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.winnerMetricItem}>
+                    <ThemedText style={styles.winnerMetricLabel}>PSNR farkı</ThemedText>
+                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.psnr_delta ?? 0) >= 0 ? '#4ade80' : '#f87171' }]}>
+                      {agingComparison.psnr_delta != null ? `${agingComparison.psnr_delta > 0 ? '+' : ''}${agingComparison.psnr_delta.toFixed(3)} dB` : '-'}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.winnerMetricItem}>
+                    <ThemedText style={styles.winnerMetricLabel}>MSE farkı</ThemedText>
+                    <ThemedText style={[styles.winnerMetricValue, { color: (agingComparison.mse_delta ?? 0) <= 0 ? '#4ade80' : '#f87171' }]}>
+                      {agingComparison.mse_delta != null ? `${agingComparison.mse_delta > 0 ? '+' : ''}${agingComparison.mse_delta.toFixed(5)}` : '-'}
+                    </ThemedText>
+                  </View>
                 </View>
               </View>
             ) : null}
@@ -2902,6 +2994,39 @@ const styles = StyleSheet.create({
   agingRow: {
     flexDirection: 'row',
     gap: 8,
+  },
+  winnerCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(250,204,21,0.35)',
+    backgroundColor: 'rgba(250,204,21,0.07)',
+    padding: 14,
+    marginTop: 10,
+    gap: 10,
+  },
+  winnerHeader: {
+    alignItems: 'center',
+  },
+  winnerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  winnerMetrics: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  winnerMetricItem: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  winnerMetricLabel: {
+    fontSize: 11,
+    opacity: 0.6,
+  },
+  winnerMetricValue: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   metricsCard: {
     borderRadius: 16,
