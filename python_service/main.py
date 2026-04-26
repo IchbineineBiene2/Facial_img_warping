@@ -51,7 +51,7 @@ warn_missing_ai_dependencies()
 _AGE_FALLBACK = 30
 
 
-def _estimate_age_from_image(img: np.ndarray) -> tuple[int, bool]:
+def _estimate_age_from_image(img: np.ndarray) -> tuple[float, bool]:
     """Returns (estimated_age, is_estimated). Tries insightface → DeepFace → fallback."""
     if _insight_app is not None:
         try:
@@ -59,7 +59,7 @@ def _estimate_age_from_image(img: np.ndarray) -> tuple[int, bool]:
             if faces:
                 age = getattr(faces[0], "age", None)
                 if age is not None:
-                    return int(round(float(age))), True
+                    return float(round(float(age), 1)), True
         except Exception:
             pass
 
@@ -77,11 +77,11 @@ def _estimate_age_from_image(img: np.ndarray) -> tuple[int, bool]:
                 result = result[0] if result else {}
             estimated_age = result.get("age") if isinstance(result, dict) else None
             if estimated_age is not None:
-                return int(round(float(estimated_age))), True
+                return float(round(float(estimated_age), 1)), True
         except Exception:
             pass
 
-    return _AGE_FALLBACK, False
+    return float(_AGE_FALLBACK), False
 
 app = FastAPI(title="Facial CV Service")
 

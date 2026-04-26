@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from scipy.interpolate import RBFInterpolator
 
+from modules.aging_module import apply_pro_aging, apply_pro_deaging
 from modules.landmark import get_key_landmark_indices
 from modules.region_map import REGION_INDICES
 
@@ -487,75 +488,7 @@ class ProWarpManager:
         landmarks: list[tuple[int, int]] | None,
         intensity: float = 0.6,
     ) -> dict:
-        intensity = float(np.clip(intensity, 0.0, 1.0))
-        src = image_np.astype(np.float32)
-        h, w = image_np.shape[:2]
-
-        gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        fshift, mag_before = _fft_spectrum(gray)
-
-        cy, cx = h // 2, w // 2
-        yy, xx = np.ogrid[:h, :w]
-        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-        cut = min(h, w) * (0.16 + 0.04 * intensity)
-        hf_mask = np.where(dist >= cut, 1.0 + 0.32 * intensity, 1.0).astype(np.float32)
-
-        enhanced_shift = fshift * hf_mask
-        enhanced_gray = np.real(np.fft.ifft2(np.fft.ifftshift(enhanced_shift))).astype(np.float32)
-        enhanced_gray = np.clip(enhanced_gray, 0, 255)
-
-        freq_boost = (enhanced_gray - gray)
-        freq_boost = cv2.GaussianBlur(freq_boost, (0, 0), sigmaX=0.9, sigmaY=0.9)
-
-        output = src.copy()
-        for c in range(3):
-            output[:, :, c] += freq_boost * (0.28 + 0.24 * intensity)
-
-        # Build regional wrinkle masks: forehead, crow's feet, nasolabial.
-        region_mask = np.zeros((h, w), dtype=np.float32)
-        if landmarks:
-            forehead_pts = _collect_points(landmarks, _region_ids("forehead_wrinkle"))
-            crow_l_pts = _collect_points(landmarks, _region_ids("left_crow_feet"))
-            crow_r_pts = _collect_points(landmarks, _region_ids("right_crow_feet"))
-            naso_l_pts = _collect_points(landmarks, _region_ids("left_nasolabial"))
-            naso_r_pts = _collect_points(landmarks, _region_ids("right_nasolabial"))
-
-            region_mask += _polygon_mask(forehead_pts, h, w, blur=27, dilate_iter=1) * 0.85
-            region_mask += _polygon_mask(crow_l_pts, h, w, blur=23, dilate_iter=1) * 1.00
-            region_mask += _polygon_mask(crow_r_pts, h, w, blur=23, dilate_iter=1) * 1.00
-            region_mask += _polygon_mask(naso_l_pts, h, w, blur=25, dilate_iter=1) * 0.92
-            region_mask += _polygon_mask(naso_r_pts, h, w, blur=25, dilate_iter=1) * 0.92
-            region_mask = np.clip(region_mask, 0.0, 1.0)
-        else:
-            region_mask[:] = 0.4
-
-        wrinkle_tex = _procedural_wrinkle_texture(h, w, seed=11)
-        wrinkle_strength = (0.22 + 0.40 * intensity) * region_mask
-
-        for c in range(3):
-            output[:, :, c] -= wrinkle_tex * wrinkle_strength * 82.0
-
-        # Desaturate and tune regional contrast.
-        hsv = cv2.cvtColor(np.clip(output, 0, 255).astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
-        hsv[:, :, 1] *= (1.0 - 0.16 * intensity)
-        aged = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
-
-        gray_aged = cv2.cvtColor(aged.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-        contrast_map = 1.0 + region_mask * (0.18 + 0.12 * intensity)
-        gray_centered = gray_aged - 128.0
-        gray_adj = np.clip(gray_centered * contrast_map + 128.0, 0, 255)
-        for c in range(3):
-            aged[:, :, c] = 0.75 * aged[:, :, c] + 0.25 * gray_adj
-
-        final = _texture_preserve_blend(image_np, np.clip(aged, 0, 255).astype(np.uint8), intensity, low=0.44, high=0.74, detail_weight=0.14)
-        _, mag_after = _fft_spectrum(cv2.cvtColor(final, cv2.COLOR_BGR2GRAY).astype(np.float32))
-
-        return {
-            "result_image": final,
-            "spectrum_before": _spectrum_vis(mag_before),
-            "spectrum_after": _spectrum_vis(mag_after),
-            "metrics": _compute_metrics(image_np, final),
-        }
+        return apply_pro_aging(image_np, landmarks=landmarks, intensity=intensity)
 
     def de_aging_pro(
         self,
@@ -563,70 +496,7 @@ class ProWarpManager:
         landmarks: list[tuple[int, int]] | None,
         intensity: float = 0.6,
     ) -> dict:
-        intensity = float(np.clip(intensity, 0.0, 1.0))
-        h, w = image_np.shape[:2]
-        src = image_np.copy()
-
-        # Skin smoothing with edge preservation.
-        bilateral = cv2.bilateralFilter(src, d=9, sigmaColor=55 + int(85 * intensity), sigmaSpace=45 + int(70 * intensity))
-
-        # Preserve eyes and lips.
-        preserve_mask = np.zeros((h, w), dtype=np.float32)
-        if landmarks:
-            eye_l = _collect_points(landmarks, _region_ids("eye_lower_left") + REGION_INDICES.get("eyebrow_left_arc", []))
-            eye_r = _collect_points(landmarks, _region_ids("eye_lower_right") + REGION_INDICES.get("eyebrow_right_arc", []))
-            lips = _collect_points(landmarks, _region_ids("lips_all"))
-
-            preserve_mask += _polygon_mask(eye_l, h, w, blur=19, dilate_iter=1)
-            preserve_mask += _polygon_mask(eye_r, h, w, blur=19, dilate_iter=1)
-            preserve_mask += _polygon_mask(lips, h, w, blur=21, dilate_iter=1)
-            preserve_mask = np.clip(preserve_mask, 0.0, 1.0)
-
-        smooth_weight = (0.34 + 0.34 * intensity) * (1.0 - preserve_mask)
-        smooth_weight3 = np.expand_dims(smooth_weight, axis=2)
-        smoothed = src.astype(np.float32) * (1.0 - smooth_weight3) + bilateral.astype(np.float32) * smooth_weight3
-
-        # Frequency-domain damping of high-frequency roughness.
-        gray = cv2.cvtColor(smoothed.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-        fshift, mag_before = _fft_spectrum(gray)
-
-        cy, cx = h // 2, w // 2
-        yy, xx = np.ogrid[:h, :w]
-        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-        cutoff = min(h, w) * (0.24 - 0.06 * intensity)
-        hf_atten = np.where(dist > cutoff, 1.0 - (0.52 + 0.22 * intensity), 1.0).astype(np.float32)
-        hf_atten = np.clip(hf_atten, 0.18, 1.0)
-
-        damped_shift = fshift * hf_atten
-        damped_gray = np.real(np.fft.ifft2(np.fft.ifftshift(damped_shift))).astype(np.float32)
-        damped_gray = np.clip(damped_gray, 0, 255)
-
-        deaged = smoothed.astype(np.float32)
-        gray_s = cv2.cvtColor(smoothed.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-        delta = damped_gray - gray_s
-        for c in range(3):
-            deaged[:, :, c] += delta * (0.34 + 0.20 * intensity)
-
-        # Keep expression edges crisp.
-        edges = cv2.Canny(cv2.cvtColor(src, cv2.COLOR_BGR2GRAY), 35, 95)
-        edge_mask = cv2.GaussianBlur(edges, (7, 7), 0).astype(np.float32) / 255.0
-        edge_mask = np.expand_dims(edge_mask, axis=2)
-        deaged = deaged * (1.0 - edge_mask * 0.72) + src.astype(np.float32) * (edge_mask * 0.72)
-
-        # Soft brightening and slight cool shift for youthful look.
-        deaged[:, :, 0] *= (1.0 + 0.06 * intensity)
-        deaged[:, :, 2] *= (1.0 - 0.04 * intensity)
-        deaged *= (1.0 + 0.05 * intensity)
-
-        final = _texture_preserve_blend(src, np.clip(deaged, 0, 255).astype(np.uint8), intensity, low=0.38, high=0.62, detail_weight=0.10)
-        _, mag_after = _fft_spectrum(cv2.cvtColor(final, cv2.COLOR_BGR2GRAY).astype(np.float32))
-
-        return {
-            "result_image": final,
-            "spectrum_before": _spectrum_vis(mag_before),
-            "spectrum_after": _spectrum_vis(mag_after),
-            "metrics": _compute_metrics(image_np, final),
-        }
+        return apply_pro_deaging(image_np, landmarks=landmarks, intensity=intensity)
 
 
 _PRO_WARP = ProWarpManager()
