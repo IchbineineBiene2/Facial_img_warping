@@ -263,65 +263,56 @@ class ProWarpManager:
     def plump_lips(self, image_np: np.ndarray, landmarks: list[tuple[int, int]], intensity: float = 0.6, smooth: float = 2.0) -> np.ndarray:
         h, w = image_np.shape[:2]
         n = len(landmarks)
-        boosted_intensity = float(intensity) * 3.0
 
-        lip_ids = self._safe_ids(REGION_INDICES["lips_all"], n)
-        if len(lip_ids) < 8:
+        lip_all_ids = self._safe_ids(REGION_INDICES.get("lips_all", []), n)
+        if len(lip_all_ids) < 8:
             return image_np.copy()
 
-        operation = "lip_plump"
-        print(f"[DEBUG] Moving region: {operation} with {len(lip_ids)} points.")
+        print("[DEBUG] Moving region: lip_plump — local radial remap.")
 
-        src = np.array([landmarks[i] for i in lip_ids], dtype=np.float32)
+        lip_pts = np.array([landmarks[i] for i in lip_all_ids], dtype=np.float32)
 
-        center_candidates = [i for i in [13, 14] if i < n]
-        if len(center_candidates) == 2:
-            center = np.mean(np.array([landmarks[13], landmarks[14]], dtype=np.float32), axis=0)
-        else:
-            center = np.mean(src, axis=0)
+        # Lip center from inner lip landmarks.
+        center_ids = [i for i in [13, 14, 0, 17] if i < n]
+        center = np.mean([landmarks[i] for i in center_ids], axis=0)
+        cx, cy = float(center[0]), float(center[1])
 
-        dst = src.copy()
-        # Radial volume expansion from lip center.
-        for idx in range(len(dst)):
-            p = dst[idx]
-            v = p - center
-            r = float(np.linalg.norm(v) + 1e-6)
-            unit = v / r
-            local_scale = 0.22 * boosted_intensity * (1.0 - np.clip(r / (0.24 * min(h, w)), 0.0, 0.7))
-            dst[idx] = p + unit * (r * local_scale)
+        # Robust lip radius: 85th-percentile distance of all lip pts from center.
+        dists = np.linalg.norm(lip_pts - np.array([[cx, cy]]), axis=1)
+        lip_radius = float(np.percentile(dists, 85))
 
-        # Add stronger vertical displacement for upper/lower lip volume.
-        vertical_offset = min(h, w) * 0.016 * boosted_intensity
-        upper_boost = -vertical_offset * 1.5
-        lower_boost = vertical_offset * 1.5
-        for i, lm_id in enumerate(lip_ids):
-            if lm_id in {0, 37, 267}:
-                dst[i, 1] += upper_boost
-            if lm_id in {14, 17}:
-                dst[i, 1] += lower_boost
-
-        # Keep all non-lip landmarks fixed as anchors so brow/cheek areas do not drift.
-        anchor_ids = [i for i in range(n) if i not in set(lip_ids)]
-        face_points = np.array([landmarks[i] for i in anchor_ids], dtype=np.float32) if anchor_ids else src
-
-        lip_box = np.array([src[:, 0].max() - src[:, 0].min(), src[:, 1].max() - src[:, 1].min()], dtype=np.float32)
-        lip_scale = float(np.linalg.norm(lip_box) + 1e-6)
-        local_epsilon = float(np.clip((lip_scale / 95.0) * 1.55, 0.9, 2.6))
-
-        warped = self._rbf_warp(
-            image_np,
-            src,
-            dst,
-            face_points,
-            smooth=smooth,
-            kernel="gaussian",
-            epsilon=local_epsilon,
-            neighbors=96,
+        # Backward remap: each output pixel samples from a position pulled toward
+        # the lip center. Pixels near the center shift the most; the pull field
+        # reaches exactly zero at r == lip_radius so the remap is seamless at the
+        # lip boundary and cannot affect anything outside.
+        grid_x, grid_y = np.meshgrid(
+            np.arange(w, dtype=np.float32),
+            np.arange(h, dtype=np.float32),
         )
-        print("[WARP] Lip plumping applied with extreme displacement")
-        return _texture_preserve_blend(image_np, warped, boosted_intensity, low=0.62, high=0.90, detail_weight=0.12)
+        dx = grid_x - cx
+        dy = grid_y - cy
+        r  = np.sqrt(dx * dx + dy * dy) + 1e-6
+
+        # (1 - r/R)^2 falloff: smooth, zero at R, no discontinuity.
+        radial_weight = np.clip(1.0 - r / lip_radius, 0.0, 1.0) ** 2
+        pull = float(intensity) * 0.28 * radial_weight
+
+        map_x = np.clip(grid_x - dx * pull, 0, w - 1)
+        map_y = np.clip(grid_y - dy * pull, 0, h - 1)
+
+        warped = cv2.remap(image_np, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+        print("[WARP] Lip plumping applied — radial remap")
+
+        # Blend strictly inside the lip hull. The remap field is already zero at
+        # the hull boundary so the composite is seamless even without heavy blur.
+        zone = _polygon_mask([(int(p[0]), int(p[1])) for p in lip_pts], h, w, blur=11, dilate_iter=1)
+        zone3 = np.stack([zone, zone, zone], axis=2)
+        alpha = float(np.clip(0.60 + intensity * 0.35, 0.0, 1.0))
+        blended = image_np.astype(np.float32) * (1.0 - alpha * zone3) + warped.astype(np.float32) * (alpha * zone3)
+        return np.clip(blended, 0, 255).astype(np.uint8)
 
     def slim_face(self, image_np: np.ndarray, landmarks: list[tuple[int, int]], intensity: float = 0.6, smooth: float = 3.0) -> np.ndarray:
+        h, w = image_np.shape[:2]
         n = len(landmarks)
         jaw_ids = self._safe_ids(REGION_INDICES["jawline_outer"], n)
         cheek_ids = self._safe_ids(REGION_INDICES["cheeks_outer"], n)
@@ -367,7 +358,15 @@ class ProWarpManager:
             # Slight lift in lower contour for V-shape effect.
             dst[i, 1] = y - abs(dx) * (0.010 + 0.012 * y_ratio) * intensity
 
-        face_points = np.array([landmarks[i] for i in jaw_ids], dtype=np.float32)
+        # Expand face_points 50 px outward so _face_mask is 1.0 across the entire
+        # original face boundary — full displacement at the original contour, no ghost.
+        all_ctrl_pts = np.array([landmarks[i] for i in selected], dtype=np.float32)
+        ctrl_center  = np.mean(all_ctrl_pts, axis=0)
+        ctrl_dirs    = all_ctrl_pts - ctrl_center
+        ctrl_norms   = np.linalg.norm(ctrl_dirs, axis=1, keepdims=True) + 1e-6
+        ctrl_expanded = all_ctrl_pts + (ctrl_dirs / ctrl_norms) * 50.0
+        face_points   = np.vstack([all_ctrl_pts, ctrl_expanded])
+
         warped = self._rbf_warp(
             image_np,
             src,
@@ -377,7 +376,22 @@ class ProWarpManager:
             kernel=_DEF_KERNEL,
             neighbors=128,
         )
-        return _texture_preserve_blend(image_np, warped, intensity, low=0.40, high=0.66, detail_weight=0.16)
+
+        # Build zone from ALL modified control points (jaw + cheeks + anchors) so
+        # both the jaw ghost AND cheek ghost are covered.  Forehead points extend
+        # the zone to the top of the face for a complete face-oval mask.
+        forehead_ids = self._safe_ids([10, 9, 151, 337, 299, 109, 67, 103, 54, 21], n)
+        zone_pts = [landmarks[i] for i in selected] + [landmarks[i] for i in forehead_ids]
+        # dilate_iter=4 → ~20 px outward so mask=1.0 at all original contour points.
+        zone = _polygon_mask(zone_pts, h, w, blur=23, dilate_iter=4)
+        zone3 = np.stack([zone, zone, zone], axis=2)
+        out_f = image_np.astype(np.float32) * (1.0 - zone3) + warped.astype(np.float32) * zone3
+
+        # Restore high-frequency skin detail.
+        base   = cv2.GaussianBlur(image_np.astype(np.float32), (0, 0), sigmaX=1.05)
+        detail = image_np.astype(np.float32) - base
+        out_f  = np.clip(out_f + 0.12 * detail, 0, 255)
+        return out_f.astype(np.uint8)
 
     def pro_smile_enhancement(
         self,
@@ -447,7 +461,6 @@ class ProWarpManager:
         n = len(landmarks)
         brow_left = self._safe_ids(REGION_INDICES["eyebrow_left_arc"], n)
         brow_right = self._safe_ids(REGION_INDICES["eyebrow_right_arc"], n)
-        forehead_anchor_ids = self._safe_ids(REGION_INDICES["forehead_anchors"], n)
 
         brows = brow_left + brow_right
         if len(brows) < 6:
@@ -456,31 +469,67 @@ class ProWarpManager:
         operation = "brow_lift"
         print(f"[DEBUG] Moving region: {operation} with {len(brows)} points.")
 
-        target_ids = brows
-        anchor_ids = [i for i in forehead_anchor_ids if i not in target_ids]
-
-        src = np.array([landmarks[i] for i in target_ids], dtype=np.float32)
+        src = np.array([landmarks[i] for i in brows], dtype=np.float32)
         dst = src.copy()
 
         scale = float(min(image_np.shape[:2]))
 
-        left_outer = {46, 53}
-        right_outer = {276, 283}
+        # Outer IDs of each arc get an extra lift for arch shaping.
+        left_outer_ids  = {brow_left[0], brow_left[-1]}  if brow_left  else set()
+        right_outer_ids = {brow_right[0], brow_right[-1]} if brow_right else set()
 
-        for i, lm_id in enumerate(target_ids):
-            x, y = dst[i]
-            dy = 0.0
+        for i, lm_id in enumerate(brows):
+            dy = -scale * 0.038 * intensity
+            if lm_id in left_outer_ids or lm_id in right_outer_ids:
+                dy += -scale * 0.015 * intensity
+            dst[i, 1] += dy
 
-            if lm_id in brows:
-                dy += -scale * 0.018 * intensity
-                if lm_id in left_outer or lm_id in right_outer:
-                    dy += -scale * 0.007 * intensity
+        # Eye landmarks added as zero-displacement anchors: the RBF is forced
+        # to produce zero displacement at the eye boundary, preventing the eyes
+        # from being dragged upward when the brows move.
+        eye_anchor_ids = self._safe_ids(
+            [33, 133, 145, 159,               # left eye corners + lid centers
+             7, 163, 144, 153, 154, 155,       # left lower lid
+             362, 263, 374, 386,               # right eye corners + lid centers
+             249, 390, 373, 380, 381, 382],    # right lower lid
+            n,
+        )
+        if eye_anchor_ids:
+            eye_src = np.array([landmarks[i] for i in eye_anchor_ids], dtype=np.float32)
+            src_rbf = np.vstack([src, eye_src])
+            dst_rbf = np.vstack([dst, eye_src])   # dst == src → zero displacement
+        else:
+            src_rbf = src
+            dst_rbf = dst
 
-            dst[i, 1] = y + dy
+        face_points = self._face_points(landmarks)
+        warped = self._rbf_warp(image_np, src_rbf, dst_rbf, face_points, smooth=min(smooth, 1.8))
 
-        face_points = np.array([landmarks[i] for i in anchor_ids], dtype=np.float32) if anchor_ids else self._face_points(landmarks)
-        warped = self._rbf_warp(image_np, src, dst, face_points, smooth=smooth)
-        return _blend(image_np, warped, intensity, low=0.40, high=0.74)
+        # Brow blend zone: brow arcs + forehead top + upper eyelid boundary.
+        h, w = image_np.shape[:2]
+        forehead_top = self._safe_ids([10, 9, 151, 337, 299, 109, 67], n)
+        upper_lid    = self._safe_ids([159, 160, 161, 386, 385, 384], n)
+        brow_zone_pts = [landmarks[i] for i in brow_left + brow_right + forehead_top + upper_lid]
+        zone = _polygon_mask(brow_zone_pts, h, w, blur=13, dilate_iter=1)
+
+        # Explicitly cut out each eye hull from the blend zone so no warped eye
+        # pixels are ever composited in, even if the RBF residual is non-zero.
+        for eye_ids in [
+            self._safe_ids([33, 133, 145, 159, 160, 161, 163, 144, 153, 154, 155, 158, 157], n),
+            self._safe_ids([362, 263, 374, 386, 385, 384, 390, 373, 380, 381, 382, 387, 388], n),
+        ]:
+            if len(eye_ids) >= 3:
+                eye_mask = np.zeros((h, w), dtype=np.uint8)
+                hull = cv2.convexHull(np.array([landmarks[i] for i in eye_ids], dtype=np.int32))
+                cv2.fillConvexPoly(eye_mask, hull, 255)
+                eye_mask = cv2.dilate(eye_mask, np.ones((5, 5), np.uint8), iterations=1)
+                eye_mask = cv2.GaussianBlur(eye_mask, (15, 15), 0).astype(np.float32) / 255.0
+                zone = np.clip(zone - eye_mask, 0.0, 1.0)
+
+        zone3 = np.stack([zone, zone, zone], axis=2)
+        alpha = float(np.clip(0.45 + intensity * (0.82 - 0.45), 0.0, 1.0))
+        blended = image_np.astype(np.float32) * (1.0 - alpha * zone3) + warped.astype(np.float32) * (alpha * zone3)
+        return np.clip(blended, 0, 255).astype(np.uint8)
 
     def aging_pro(
         self,

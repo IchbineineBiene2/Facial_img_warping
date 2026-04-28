@@ -29,14 +29,11 @@ import {
     estimateAgeFromBase64,
     estimateAgeFromUri,
     exportEvaluationReportFromBase64,
-    frequencyFromBase64,
     frequencyProFromBase64,
     agingCompareFromBase64,
-    aiGuidedAgingFromBase64,
     landmarksFromBase64,
     preprocessFromUri,
-  transferExpressionFromBase64,
-    warpFromBase64,
+    transferExpressionFromBase64,
     warpProFromBase64,
     type AgingCompareResult,
     type ProMetrics,
@@ -1134,12 +1131,7 @@ export default function CreateScreen() {
     setProPreset(preset);
     setProIntensity(values.intensity);
     setProRbfSmooth(values.rbfSmooth);
-
-    if (!preprocessedB64) return;
-    if (proDebounceRef.current) {
-      clearTimeout(proDebounceRef.current);
-    }
-    runProOperation({ intensity: values.intensity, rbfSmooth: values.rbfSmooth });
+    // State changes above trigger the useEffect debounce — no direct call needed.
   };
 
   useEffect(() => {
