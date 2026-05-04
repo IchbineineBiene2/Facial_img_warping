@@ -1,3 +1,5 @@
+import { useRouter } from "expo-router";
+
 import Slider from '@react-native-community/slider';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
@@ -6,19 +8,19 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Modal,
-    PanResponder,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    View,
-    useWindowDimensions
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+  useWindowDimensions
 } from 'react-native';
 
 import { STUDIO, StudioScreen } from '@/components/studio-shell';
@@ -26,18 +28,18 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-    estimateAgeFromBase64,
-    estimateAgeFromUri,
-    exportEvaluationReportFromBase64,
-    frequencyProFromBase64,
-    agingCompareFromBase64,
-    landmarksFromBase64,
-    preprocessFromUri,
-    transferExpressionFromBase64,
-    warpProFromBase64,
-    type AgingCompareResult,
-    type ProMetrics,
-    type ProWarpOperation
+  agingCompareFromBase64,
+  estimateAgeFromBase64,
+  estimateAgeFromUri,
+  exportEvaluationReportFromBase64,
+  frequencyProFromBase64,
+  landmarksFromBase64,
+  preprocessFromUri,
+  transferExpressionFromBase64,
+  warpProFromBase64,
+  type AgingCompareResult,
+  type ProMetrics,
+  type ProWarpOperation
 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -176,6 +178,7 @@ const clampCropBox = (box: CropBox, stage: StageLayout, imageSize: { width: numb
 };
 
 export default function CreateScreen() {
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   // In dark mode tint is #fff — text on tint buttons must be dark to be visible
@@ -1374,6 +1377,20 @@ export default function CreateScreen() {
               </View>
               <ThemedText style={styles.uploadDropzoneTitle}>Fotoğraf Seç</ThemedText>
               <ThemedText style={[styles.uploadDropzoneHint, { color: mutedText }]}>Net bir portre yükleyin</ThemedText>
+            <Pressable
+              onPress={() => router.push("/camera")}
+              style={{
+                  marginTop: 12,
+                  padding: 14,
+                  backgroundColor: "#8B5CF6",
+                  borderRadius: 14,
+                  alignItems: "center",
+              }}
+               >
+              <Text style={{ color: "white", fontWeight: "700" }}>
+                📷 Kamera Aç
+              </Text>
+            </Pressable>
             </Pressable>
 
             <View style={styles.statusRow}>
@@ -1466,7 +1483,7 @@ export default function CreateScreen() {
 
             {/* Landmark model selector (FR-7.5) */}
             <View style={{ marginBottom: 12 }}>
-              <ThemedText style={[styles.sliderLabel, { marginBottom: 6 }]}>Landmark Modeli</ThemedText>
+              <ThemedText style={[styles.sideLabel, { marginBottom: 6, textAlign: 'left' }]}>Landmark Modeli</ThemedText>
               <View style={{ flexDirection: 'row', gap: 6 }}>
                 {(['mediapipe', 'dlib', 'hybrid'] as const).map((opt) => (
                   <Pressable
@@ -1966,7 +1983,7 @@ export default function CreateScreen() {
                 {metricTableRows.map((row) => (
                   <View key={row.metric} style={styles.metricTableDataRow}>
                     <Text style={[styles.metricDataCell, styles.metricDataMetric]}>{row.metric}</Text>
-                    <View style={[styles.metricDataCell, styles.metricDataValue, styles.metricValueCell]}>
+                    <View style={[styles.metricDataValue, styles.metricValueCell]}>
                       <View style={[styles.metricStatusDot, { backgroundColor: METRIC_STATUS_COLOR[row.status] }]} />
                       <Text style={[styles.metricValueText, { color: METRIC_STATUS_COLOR[row.status] }]}>{row.value}</Text>
                     </View>

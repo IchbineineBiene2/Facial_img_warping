@@ -27,6 +27,7 @@ function AppStack() {
           <Stack.Screen name="profile" options={{ title: 'Profil' }} />
           <Stack.Screen name="create" options={{ headerShown: false, title: 'Oluştur' }} />
           <Stack.Screen name="library" options={{ headerShown: false, title: 'Kütüphane' }} />
+          <Stack.Screen name="camera" options={{ headerShown: false, title: 'Kamera' }} />
           <Stack.Screen name="settings" options={{ headerShown: false, title: 'Ayarlar' }} />
           <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         </Stack>
