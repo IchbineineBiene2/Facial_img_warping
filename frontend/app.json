@@ -28,6 +28,12 @@
     "plugins": [
       "expo-router",
       [
+        "react-native-vision-camera",
+        {
+    "cameraPermissionText": "Kamera yüz efektleri için kullanılacak."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "Foto ve video cekebilmek icin kamera izni gerekiyor.",
