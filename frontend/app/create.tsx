@@ -23,6 +23,7 @@ import {
   useWindowDimensions
 } from 'react-native';
 
+import LiveWarpCamera from '@/components/live-warp-camera';
 import { STUDIO, StudioScreen } from '@/components/studio-shell';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -186,6 +187,7 @@ export default function CreateScreen() {
   const { width, height } = useWindowDimensions();
   const isWide = width >= 960;
   const cropStageHeight = Math.min(560, Math.max(360, height - 220));
+  const [mode, setMode] = useState<'photo' | 'live'>('photo');
   const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number } | null>(null);
@@ -703,6 +705,22 @@ export default function CreateScreen() {
     if (zoom === 1) {
       setLightboxOffset({ x: 0, y: 0 });
     }
+  };
+
+  const handleLiveCapture = (dataUrl: string, w: number, h: number) => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const name = `canli-yakalama-${stamp}.png`;
+    setSelectedImageName(name);
+    setSelectedImageUri(dataUrl);
+    setSelectedImageSize({ width: w, height: h });
+    setProcessState('selected');
+    setStatusMessage(`Canlı yakalama hazır: ${w}x${h}.`);
+    setCropApplied(false);
+    resetExpressionTransferState();
+    resetAgeAnalysis();
+    closeCropEditor();
+    setMode('photo');
+    void runAgeAnalysis(dataUrl, 'before', 'uri');
   };
 
   const pickImage = async () => {
@@ -1330,7 +1348,51 @@ export default function CreateScreen() {
       <View style={styles.header}>
         <View style={styles.headerTitleGroup}>
           <ThemedText type="title" style={styles.headerTitle}>Oluştur</ThemedText>
-          <ThemedText style={[styles.headerSubtitle, { color: mutedText }]}>Yüzünüzü dilediğiniz gibi şekillendirin.</ThemedText>
+          <ThemedText style={[styles.headerSubtitle, { color: mutedText }]}>
+            {mode === 'live' ? 'Kameranı aç, slider çevir, yüzün anlık değişsin.' : 'Yüzünüzü dilediğiniz gibi şekillendirin.'}
+          </ThemedText>
+
+          <View style={[styles.modeToggle, { backgroundColor: softSurface, borderColor: panelBorder }]}>
+            <Pressable
+              onPress={() => setMode('photo')}
+              style={[
+                styles.modeOption,
+                mode === 'photo' && { backgroundColor: Colors[colorScheme].tint },
+              ]}>
+              <Ionicons
+                name="image-outline"
+                size={14}
+                color={mode === 'photo' ? tintTextColor : colors.text}
+              />
+              <ThemedText
+                style={[
+                  styles.modeOptionText,
+                  { color: mode === 'photo' ? tintTextColor : colors.text },
+                ]}>
+                Fotoğraf
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={() => setMode('live')}
+              style={[
+                styles.modeOption,
+                mode === 'live' && { backgroundColor: Colors[colorScheme].tint },
+              ]}>
+              <Ionicons
+                name="videocam-outline"
+                size={14}
+                color={mode === 'live' ? tintTextColor : colors.text}
+              />
+              <ThemedText
+                style={[
+                  styles.modeOptionText,
+                  { color: mode === 'live' ? tintTextColor : colors.text },
+                ]}>
+                Anlık Kamera
+              </ThemedText>
+              <View style={styles.modeOptionDot} />
+            </Pressable>
+          </View>
         </View>
         <View style={styles.headerActions}>
           <Pressable style={[styles.topActionButton, { backgroundColor: softSurface, borderColor: panelBorder }]} onPress={clearWorkspace}>
@@ -1345,6 +1407,11 @@ export default function CreateScreen() {
       </View>
 
       <View style={styles.content}>
+        {mode === 'live' ? (
+          <View style={styles.liveWrap}>
+            <LiveWarpCamera onCapture={handleLiveCapture} isDark={colorScheme === 'dark'} />
+          </View>
+        ) : (
         <View style={[styles.workspace, isWide && styles.workspaceWide]}>
           <View
             style={[
@@ -1377,20 +1444,25 @@ export default function CreateScreen() {
               </View>
               <ThemedText style={styles.uploadDropzoneTitle}>Fotoğraf Seç</ThemedText>
               <ThemedText style={[styles.uploadDropzoneHint, { color: mutedText }]}>Net bir portre yükleyin</ThemedText>
-            <Pressable
-              onPress={() => router.push("/camera")}
-              style={{
-                  marginTop: 12,
-                  padding: 14,
-                  backgroundColor: "#8B5CF6",
-                  borderRadius: 14,
-                  alignItems: "center",
-              }}
-               >
-              <Text style={{ color: "white", fontWeight: "700" }}>
-                📷 Kamera Aç
-              </Text>
             </Pressable>
+            <Pressable
+              onPress={() => setMode('live')}
+              style={{
+                marginTop: 10,
+                padding: 12,
+                backgroundColor: 'rgba(160,32,240,0.12)',
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: 'rgba(160,32,240,0.35)',
+                alignItems: 'center',
+                flexDirection: 'row',
+                justifyContent: 'center',
+                gap: 8,
+              }}>
+              <Ionicons name="videocam-outline" size={16} color="#A020F0" />
+              <Text style={{ color: '#A020F0', fontWeight: '700' }}>
+                Anlık Kamera Modunu Aç
+              </Text>
             </Pressable>
 
             <View style={styles.statusRow}>
@@ -2052,6 +2124,7 @@ export default function CreateScreen() {
             </ScrollView>
           </View>
         </View>
+        )}
       </View>
       </View>
 
@@ -2316,6 +2389,41 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     maxWidth: 1440,
     overflow: 'hidden',
+  },
+  liveWrap: {
+    flex: 1,
+    width: '100%',
+    alignSelf: 'center',
+    maxWidth: 1440,
+    overflow: 'hidden',
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    padding: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    gap: 4,
+  },
+  modeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  modeOptionText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modeOptionDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ef4444',
+    marginLeft: 2,
   },
   workspaceWide: {
     flexDirection: 'row',
