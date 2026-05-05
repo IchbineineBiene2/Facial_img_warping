@@ -9,6 +9,7 @@ except Exception:
     pywt = None
 
 from modules.evaluation_metrics import evaluate_metrics
+from modules.hair_segmentation import apply_hair_whitening as _mp_hair_whitening
 from modules.landmark import detect_landmarks
 from modules.region_map import REGION_INDICES
 
@@ -234,6 +235,7 @@ def _apply_facial_sagging(image_np: np.ndarray, landmarks: list[tuple[int, int]]
     return _apply_flow_warp(image_np, flow_x, flow_y)
 
 
+
 def _fft_spectrum(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     f = np.fft.fft2(gray.astype(np.float32))
     fshift = np.fft.fftshift(f)
@@ -372,15 +374,21 @@ def apply_pro_aging(
     # Add facial sagging (jaw/cheek/smile-line) while keeping eye droop disabled.
     aged = _apply_facial_sagging(aged, landmarks, intensity)
 
-    gray_before = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray_after = cv2.cvtColor(aged, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    _, mag_before = _fft_spectrum(gray_before)
-    _, mag_after = _fft_spectrum(gray_after)
+    # Hair whitening for aged appearance (MediaPipe segmentation).
+    aged = _mp_hair_whitening(aged, intensity=intensity)
+
+    # 3 kanal Fourier
+    b, g, r = cv2.split(aged)
+    gray_ch = cv2.cvtColor(aged, cv2.COLOR_BGR2GRAY)
+    _, mag_gray = _fft_spectrum(gray_ch)
+    _, mag_b = _fft_spectrum(b)
+    _, mag_r = _fft_spectrum(r)
 
     return {
         "result_image": aged,
-        "spectrum_before": _spectrum_vis(mag_before),
-        "spectrum_after": _spectrum_vis(mag_after),
+        "spectrum_gray": _spectrum_vis(mag_gray),
+        "spectrum_blue": _spectrum_vis(mag_b),
+        "spectrum_red": _spectrum_vis(mag_r),
         "metrics": _augment_metrics(image_np, aged),
     }
 
@@ -430,14 +438,17 @@ def apply_pro_deaging(
     blended = blended * skin + image_np.astype(np.float32) * (1.0 - skin)
     deaged = np.clip(blended, 0, 255).astype(np.uint8)
 
-    gray_before = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray_after = cv2.cvtColor(deaged, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    _, mag_before = _fft_spectrum(gray_before)
-    _, mag_after = _fft_spectrum(gray_after)
+    # 3 kanal Fourier
+    b, g, r = cv2.split(deaged)
+    gray_ch = cv2.cvtColor(deaged, cv2.COLOR_BGR2GRAY)
+    _, mag_gray = _fft_spectrum(gray_ch)
+    _, mag_b = _fft_spectrum(b)
+    _, mag_r = _fft_spectrum(r)
 
     return {
         "result_image": deaged,
-        "spectrum_before": _spectrum_vis(mag_before),
-        "spectrum_after": _spectrum_vis(mag_after),
+        "spectrum_gray": _spectrum_vis(mag_gray),
+        "spectrum_blue": _spectrum_vis(mag_b),
+        "spectrum_red": _spectrum_vis(mag_r),
         "metrics": _augment_metrics(image_np, deaged),
     }

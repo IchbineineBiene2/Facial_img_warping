@@ -75,20 +75,54 @@ def _init_dlib() -> bool:
 
 
 def _detect_dlib_68(image_np: np.ndarray) -> list[tuple[int, int]] | None:
+    """Detect 68 landmarks using Dlib.
+    
+    OPTIMIZATION: Downscales large images before detection to prevent extreme slowness.
+    """
     if not _init_dlib():
         return None
 
-    gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
-    faces = _DLIB_DETECTOR(gray, 1)
+    h, w = image_np.shape[:2]
+    
+    # --- Optimization: Downscale for detection if too large ---
+    # Dlib's CPU detector is extremely slow on high-res images.
+    target_dim = 800
+    if max(h, w) > target_dim:
+        scale = target_dim / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        # Use simple linear interpolation for speed
+        proc_img = cv2.resize(image_np, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        is_scaled = True
+    else:
+        proc_img = image_np
+        is_scaled = False
+        scale = 1.0
+
+    gray = cv2.cvtColor(proc_img, cv2.COLOR_BGR2GRAY)
+    
+    # Dlib detector (up-sampling = 0 for maximum speed on reasonably sized images)
+    faces = _DLIB_DETECTOR(gray, 0)
     if len(faces) == 0:
-        return None
+        # Try one up-sample if nothing found and image was already small
+        if not is_scaled:
+            faces = _DLIB_DETECTOR(gray, 1)
+        
+        if len(faces) == 0:
+            return None
 
     face = faces[0]
     shape = _DLIB_PREDICTOR(gray, face)
+    
     points: list[tuple[int, int]] = []
+    inv_scale = 1.0 / scale if is_scaled else 1.0
+    
     for i in range(68):
         p = shape.part(i)
-        points.append((int(p.x), int(p.y)))
+        if is_scaled:
+            points.append((int(p.x * inv_scale), int(p.y * inv_scale)))
+        else:
+            points.append((int(p.x), int(p.y)))
+            
     return points
 
 
