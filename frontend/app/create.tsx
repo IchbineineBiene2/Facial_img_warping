@@ -8,19 +8,19 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Modal,
-  PanResponder,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-  useWindowDimensions
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Modal,
+    PanResponder,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    View,
+    useWindowDimensions
 } from 'react-native';
 
 import LiveWarpCamera from '@/components/live-warp-camera';
@@ -29,18 +29,18 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
-  agingCompareFromBase64,
-  estimateAgeFromBase64,
-  estimateAgeFromUri,
-  exportEvaluationReportFromBase64,
-  frequencyProFromBase64,
-  landmarksFromBase64,
-  preprocessFromUri,
-  transferExpressionFromBase64,
-  warpProFromBase64,
-  type AgingCompareResult,
-  type ProMetrics,
-  type ProWarpOperation
+    agingCompareFromBase64,
+    estimateAgeFromBase64,
+    estimateAgeFromUri,
+    exportEvaluationReportFromBase64,
+    frequencyProFromBase64,
+    landmarksFromBase64,
+    preprocessFromUri,
+    transferExpressionFromBase64,
+    warpProFromBase64,
+    type AgingCompareResult,
+    type ProMetrics,
+    type ProWarpOperation
 } from '@/services/facial-api';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -251,8 +251,9 @@ export default function CreateScreen() {
   const [evalMetrics, setEvalMetrics] = useState<ProMetrics | null>(null);
   const [evalSourceLabel, setEvalSourceLabel] = useState<string | null>(null);
   const [evalResultB64, setEvalResultB64] = useState<string | null>(null);
-  const [spectrumBeforeB64, setSpectrumBeforeB64] = useState<string | null>(null);
-  const [spectrumAfterB64, setSpectrumAfterB64] = useState<string | null>(null);
+  const [spectrumGrayB64, setSpectrumGrayB64] = useState<string | null>(null);
+  const [spectrumBlueB64, setSpectrumBlueB64] = useState<string | null>(null);
+  const [spectrumRedB64, setSpectrumRedB64] = useState<string | null>(null);
   const [ageBefore, setAgeBefore] = useState<number | null>(null);
   const [ageAfter, setAgeAfter] = useState<number | null>(null);
   const [ageLoading, setAgeLoading] = useState(false);
@@ -886,8 +887,9 @@ export default function CreateScreen() {
     setEvalMetrics(null);
     setEvalSourceLabel(null);
     setEvalResultB64(null);
-    setSpectrumBeforeB64(null);
-    setSpectrumAfterB64(null);
+    setSpectrumGrayB64(null);
+    setSpectrumBlueB64(null);
+    setSpectrumRedB64(null);
     setAgeAfter(null);
     setProCompareHeld(false);
     proCompareOpacity.setValue(0);
@@ -1025,8 +1027,9 @@ export default function CreateScreen() {
       const data = await frequencyProFromBase64(preprocessedB64, mode, agingIntensity, { landmarkBackend });
       if (!data.success) throw new Error(data.message ?? 'Frequency effect failed');
       setAgingResultB64(data.result_image_b64);
-      setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
-      setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
+      setSpectrumGrayB64(data.spectrum_gray_b64 ?? null);
+      setSpectrumBlueB64(data.spectrum_blue_b64 ?? null);
+      setSpectrumRedB64(data.spectrum_red_b64 ?? null);
       setEvalMetrics(data.metrics ?? null);
       setEvalSourceLabel(mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
       setEvalResultB64(data.result_image_b64 ?? null);
@@ -1078,8 +1081,9 @@ export default function CreateScreen() {
       setEvalSourceLabel(`AI Comparison / ${agingMode}`);
       setEvalResultB64(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64 ?? null);
       setProMetrics(data.ai_guided.metrics ?? null);
-      setSpectrumBeforeB64(null);
-      setSpectrumAfterB64(null);
+      setSpectrumGrayB64(null);
+      setSpectrumBlueB64(null);
+      setSpectrumRedB64(null);
       setAgeAfter(null);
       void runAgeAnalysis(data.ai_guided.result_image_b64 ?? data.frequency_based.result_image_b64, 'after', 'base64');
       setStatusMessage('AI destekli yaslandirma karsilastirmasi hazir.');
@@ -1118,8 +1122,9 @@ export default function CreateScreen() {
         setEvalMetrics(data.metrics ?? null);
         setEvalSourceLabel(data.mode === 'aging' ? 'Pro Frequency / Aging' : 'Pro Frequency / De-Aging');
         setEvalResultB64(data.result_image_b64 ?? null);
-        setSpectrumBeforeB64(data.spectrum_before_b64 ?? null);
-        setSpectrumAfterB64(data.spectrum_after_b64 ?? null);
+        setSpectrumGrayB64(data.spectrum_gray_b64 ?? null);
+        setSpectrumBlueB64(data.spectrum_blue_b64 ?? null);
+        setSpectrumRedB64(data.spectrum_red_b64 ?? null);
         setAgeAfter(null);
         void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
       } else {
@@ -1135,8 +1140,9 @@ export default function CreateScreen() {
         setEvalMetrics(data.metrics ?? null);
         setEvalSourceLabel(`Pro Warp / ${PRO_LABEL[effectiveOperation]}`);
         setEvalResultB64(data.result_image_b64 ?? null);
-        setSpectrumBeforeB64(null);
-        setSpectrumAfterB64(null);
+        setSpectrumGrayB64(null);
+        setSpectrumBlueB64(null);
+        setSpectrumRedB64(null);
         setAgeAfter(null);
         void runAgeAnalysis(data.result_image_b64, 'after', 'base64');
       }
@@ -1253,8 +1259,9 @@ export default function CreateScreen() {
     setEvalMetrics(null);
     setEvalSourceLabel(null);
     setEvalResultB64(null);
-    setSpectrumBeforeB64(null);
-    setSpectrumAfterB64(null);
+    setSpectrumGrayB64(null);
+    setSpectrumBlueB64(null);
+    setSpectrumRedB64(null);
     resetAgeAnalysis();
     closeCropEditor();
   };
@@ -2090,18 +2097,24 @@ export default function CreateScreen() {
               </View>
             ) : null}
 
-            {spectrumBeforeB64 && spectrumAfterB64 ? (
+            {spectrumGrayB64 && spectrumBlueB64 && spectrumRedB64 ? (
               <View style={styles.sideBySide}>
                 <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Spectrum Before</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumBeforeB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${spectrumBeforeB64}` }} style={styles.sideImage} contentFit="contain" />
+                  <ThemedText style={styles.sideLabel}>Spectrum (Gray)</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumGrayB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${spectrumGrayB64}` }} style={styles.sideImage} contentFit="contain" />
                   </Pressable>
                 </View>
                 <View style={styles.sideBox}>
-                  <ThemedText style={styles.sideLabel}>Spectrum After</ThemedText>
-                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumAfterB64}`)}>
-                    <Image source={{ uri: `data:image/png;base64,${spectrumAfterB64}` }} style={styles.sideImage} contentFit="contain" />
+                  <ThemedText style={styles.sideLabel}>Spectrum (Blue)</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumBlueB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${spectrumBlueB64}` }} style={styles.sideImage} contentFit="contain" />
+                  </Pressable>
+                </View>
+                <View style={styles.sideBox}>
+                  <ThemedText style={styles.sideLabel}>Spectrum (Red)</ThemedText>
+                  <Pressable onPress={() => setLightboxUri(`data:image/png;base64,${spectrumRedB64}`)}>
+                    <Image source={{ uri: `data:image/png;base64,${spectrumRedB64}` }} style={styles.sideImage} contentFit="contain" />
                   </Pressable>
                 </View>
               </View>

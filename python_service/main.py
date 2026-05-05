@@ -622,8 +622,9 @@ async def frequency_pro(
             "age_delta": age_after - age_before,
             "age_detection": "deepface" if age_detected else "fallback",
             "result_image_b64": numpy_to_b64(out["result_image"]),
-            "spectrum_before_b64": numpy_to_b64(out["spectrum_before"]),
-            "spectrum_after_b64": numpy_to_b64(out["spectrum_after"]),
+            "spectrum_gray_b64": numpy_to_b64(out["spectrum_gray"]),
+            "spectrum_blue_b64": numpy_to_b64(out["spectrum_blue"]),
+            "spectrum_red_b64": numpy_to_b64(out["spectrum_red"]),
             "metrics": out["metrics"],
         }
     except Exception as exc:

@@ -35,14 +35,35 @@ _landmarker = _build_landmarker()
 
 
 def detect_landmarks(image_np: np.ndarray) -> list[tuple] | None:
+    """Detect 468 landmarks using MediaPipe.
+    
+    OPTIMIZATION: Downscales very large images to prevent lag.
+    """
     h, w = image_np.shape[:2]
-    rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+    
+    # --- Optimization: Downscale for detection if extremely large ---
+    # MediaPipe Tasks API handles resizing internally but very high res still adds overhead.
+    target_dim = 1280
+    if max(h, w) > target_dim:
+        scale = target_dim / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        proc_img = cv2.resize(image_np, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        is_scaled = True
+    else:
+        proc_img = image_np
+        is_scaled = False
+        scale = 1.0
+
+    rgb = cv2.cvtColor(proc_img, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     result = _landmarker.detect(mp_image)
 
     if not result.face_landmarks:
         return None
 
+    inv_scale = 1.0 / scale if is_scaled else 1.0
+    
+    # Scale coordinates back to original image size
     return [(int(lm.x * w), int(lm.y * h)) for lm in result.face_landmarks[0]]
 
 

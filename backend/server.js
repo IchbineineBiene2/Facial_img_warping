@@ -5,7 +5,7 @@ const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
+const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
 
 const allowedWarpModes = new Set(['smile', 'eyebrow', 'lip', 'slim']);
 const allowedModels = new Set(['MediaPipe', 'Dlib', 'DeepFace']);

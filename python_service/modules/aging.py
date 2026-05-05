@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from modules.hair_segmentation import apply_hair_whitening, get_hair_mask
+
 
 def _skin_mask(image_np: np.ndarray) -> np.ndarray:
     ycrcb = cv2.cvtColor(image_np, cv2.COLOR_BGR2YCrCb)
@@ -18,21 +20,7 @@ def _normalized_abs_detail(gray: np.ndarray, sigma: float) -> np.ndarray:
     return cv2.normalize(detail, None, 0.0, 1.0, cv2.NORM_MINMAX)
 
 
-def _hair_mask(image_np: np.ndarray, skin_mask: np.ndarray) -> np.ndarray:
-    h, w = image_np.shape[:2]
-    hsv = cv2.cvtColor(image_np, cv2.COLOR_BGR2HSV)
 
-    # Hair is usually non-skin, darker and mostly in upper half of the crop.
-    dark = (hsv[:, :, 2] < 170).astype(np.uint8)
-    not_skin = (skin_mask < 0.35).astype(np.uint8)
-    upper = np.zeros((h, w), dtype=np.uint8)
-    upper[: int(h * 0.58), :] = 1
-
-    hair = (dark & not_skin & upper).astype(np.uint8) * 255
-    hair = cv2.morphologyEx(hair, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
-    hair = cv2.morphologyEx(hair, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
-    hair = cv2.GaussianBlur(hair, (11, 11), 0)
-    return hair.astype(np.float32) / 255.0
 
 
 def apply_aging(image_np: np.ndarray, intensity: float = 0.5) -> np.ndarray:
@@ -69,13 +57,9 @@ def apply_aging(image_np: np.ndarray, intensity: float = 0.5) -> np.ndarray:
     result[:, :, 2] *= (1.0 + 0.045 * intensity)   # a little more red
     result *= (1.0 - 0.100 * intensity)
 
-    # 3.5 Hair whitening for older appearance.
-    hair = _hair_mask(image_np, skin)
-    hair3 = np.expand_dims(hair, axis=2)
-    gray = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray3 = np.stack([gray, gray, gray], axis=2)
-    hair_whiten = 25.0 + 95.0 * intensity
-    result = result * (1.0 - hair3 * 0.55 * intensity) + (gray3 + hair_whiten) * (hair3 * 0.55 * intensity)
+    # 3.5 Hair whitening for older appearance (MediaPipe segmentation).
+    result = np.clip(result, 0, 255).astype(np.uint8)
+    result = apply_hair_whitening(result, intensity=intensity).astype(np.float32)
 
     # 3. Keep edges/facial structure stable.
     edges = cv2.Canny(image_np, 35, 100)
