@@ -133,3 +133,19 @@ Python servisi (port 8000), Express uzerinden `/api/*` yoluyla erisiliyor:
 | GET  | `/api/health` | Servis saglik kontrolu |
 
 Tum gorsel gonderimler `multipart/form-data` formatinda yapilir; cevaplar `result_image_b64` (PNG base64) icerir.
+## Realtime Camera (Advanced Setup)
+
+To run realtime camera (Vision Camera):
+
+You need:
+
+- Android Studio
+- Android SDK
+- ADB configured
+
+Then run:
+
+npx expo run:android
+
+⚠️ Not required for normal development.
+Web version works without this setup.
