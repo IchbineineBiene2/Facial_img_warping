@@ -28,6 +28,22 @@
     "plugins": [
       "expo-router",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Foto ve video cekebilmek icin kamera izni gerekiyor.",
+          "microphonePermission": "Video kaydinda ses alabilmek icin mikrofon izni gerekiyor.",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Cekilen medya dosyalarini gosterebilmek icin fotograf kutuphanesi izni gerekiyor.",
+          "savePhotosPermission": "Cekilen foto ve videolari cihaza kaydetmek icin fotograf kutuphanesine ekleme izni gerekiyor.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
