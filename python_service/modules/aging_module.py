@@ -248,7 +248,9 @@ def _apply_facial_sagging(image_np: np.ndarray, landmarks: list[tuple[int, int]]
 
     # Cap the accumulated displacement so overlapping gaussians can never produce
     # an extreme (face-tearing) warp regardless of image size or landmark spread.
-    max_disp = scale * 0.018
+    # Scaled by intensity so jaw/cheek sag is actually perceptible at higher settings,
+    # while the eye-protection ramp above still prevents midface "melting".
+    max_disp = scale * (0.018 + 0.018 * intensity)
     np.clip(flow_x, -max_disp, max_disp, out=flow_x)
     np.clip(flow_y, -max_disp, max_disp, out=flow_y)
 
@@ -347,6 +349,47 @@ def _wavelet_deaging_luma(luma: np.ndarray, skin_mask: np.ndarray, intensity: fl
     return np.clip(recon, 0, 255).astype(np.float32)
 
 
+def _aging_shadow_map(
+    landmarks: list[tuple[int, int]] | None, h: int, w: int, skin_mask: np.ndarray
+) -> np.ndarray:
+    """Soft, additive darkening in the regions that read as aging (under-eye hollows,
+    nasolabial folds, forehead, crow's feet). Unlike the wavelet/Gabor terms this does
+    NOT depend on pre-existing skin texture, so it produces visible aging cues even on
+    perfectly smooth/young skin. Returns a [0,1] map already confined to the skin."""
+    if not landmarks:
+        return np.zeros((h, w), dtype=np.float32)
+
+    shade = np.zeros((h, w), dtype=np.float32)
+    for key, weight, blur in (
+        ("forehead_wrinkle", 0.45, 27),
+        ("left_crow_feet", 0.55, 19),
+        ("right_crow_feet", 0.55, 19),
+        ("left_nasolabial", 0.80, 23),
+        ("right_nasolabial", 0.80, 23),
+        ("eye_lower_left", 0.60, 17),
+        ("eye_lower_right", 0.60, 17),
+    ):
+        pts = _collect_points(landmarks, REGION_INDICES.get(key, []))
+        if len(pts) >= 3:
+            shade += _polygon_mask(pts, h, w, blur=blur, dilate_iter=1) * weight
+
+    shade = np.clip(shade, 0.0, 1.0)
+    return shade * np.clip(skin_mask, 0.0, 1.0)
+
+
+def _age_spot_field(h: int, w: int, skin_mask: np.ndarray, seed: int = 23) -> np.ndarray:
+    """Low-frequency mottling -> sparse, soft age spots / uneven pigmentation. Returns a
+    [0,1] field confined to the skin (only the upper tail of the noise becomes a spot)."""
+    rng = np.random.default_rng(seed)
+    base = rng.standard_normal((max(1, h // 8), max(1, w // 8))).astype(np.float32)
+    base = cv2.resize(base, (w, h), interpolation=cv2.INTER_CUBIC)
+    base = cv2.GaussianBlur(base, (0, 0), sigmaX=max(2.0, w * 0.012))
+    base = cv2.normalize(base, None, 0.0, 1.0, cv2.NORM_MINMAX)
+    spots = np.clip((base - 0.62) / 0.38, 0.0, 1.0)
+    spots = cv2.GaussianBlur(spots, (0, 0), sigmaX=max(1.5, w * 0.006))
+    return spots * np.clip(skin_mask, 0.0, 1.0)
+
+
 def apply_pro_aging(
     image_np: np.ndarray,
     landmarks: list[tuple[int, int]] | None = None,
@@ -357,37 +400,61 @@ def apply_pro_aging(
     y = ycrcb[:, :, 0]
 
     skin_mask = build_skin_mask(image_np, landmarks)
+    h, w = image_np.shape[:2]
+    cr = ycrcb[:, :, 1]
+    cb = ycrcb[:, :, 2]
 
     # FR-4.2: Increase high-frequency components in skin region with multi-scale decomposition.
     aged_y = _wavelet_aging_luma(y, skin_mask, intensity)
 
-    h, w = image_np.shape[:2]
     wrinkle_mask = _wrinkle_focus_mask(landmarks, h, w, skin_mask)
 
     # FR-4.2: Add directional wrinkle texture (Gabor) with emphasis on eye corners and smile lines.
-    wrinkle = _gabor_wrinkle_map(y.astype(np.uint8))
-    wrinkle_strength = (0.20 + 0.30 * intensity) * wrinkle_mask
+    wrinkle = _gabor_wrinkle_map(y.astype(np.uint8))  # [0,1], peaks on creases
 
-    # Use zero-mean modulation to avoid global darkening while increasing wrinkle visibility.
+    # Fine wrinkle relief (zero-mean) preserves texture detail without global darkening...
     wrinkle_centered = wrinkle - cv2.GaussianBlur(wrinkle, (0, 0), sigmaX=4.0, sigmaY=4.0)
-    aged_y = aged_y + wrinkle_centered * wrinkle_strength * 118.0
+    aged_y = aged_y + wrinkle_centered * ((0.30 + 0.55 * intensity) * wrinkle_mask) * 130.0
+    # ...plus a darkening deposit so creases actually read as wrinkles even on smooth skin.
+    crease = cv2.GaussianBlur(wrinkle, (0, 0), sigmaX=1.1, sigmaY=1.1)
+    aged_y = aged_y - crease * ((0.12 + 0.20 * intensity) * wrinkle_mask) * 70.0
+
+    # FR-4.2: Synthesised aging shadows (under-eye / nasolabial / forehead). Additive
+    # darkening that does not rely on existing texture, so it shows on smooth/young skin.
+    shadow = _aging_shadow_map(landmarks, h, w, skin_mask)
+    aged_y = aged_y - shadow * (5.0 + 22.0 * intensity)
 
     # FR-4.2: Add controlled high-frequency grain/noise to strengthen aged skin texture.
     grain = _high_frequency_noise(h, w)
-    grain_strength = (0.02 + 0.08 * intensity) * wrinkle_mask
-    aged_y = aged_y + grain * grain_strength * 22.0
+    aged_y = aged_y + grain * ((0.05 + 0.14 * intensity) * wrinkle_mask) * 24.0
 
-    # FR-4.2: Slight local contrast boost in luminance only (no color shift).
-    aged_y = aged_y + cv2.GaussianBlur((aged_y - y), (0, 0), sigmaX=1.0, sigmaY=1.0) * (0.06 + 0.09 * intensity)
+    # FR-4.2: Age spots / uneven pigmentation (low-frequency mottling).
+    spots = _age_spot_field(h, w, skin_mask)
+    aged_y = aged_y - spots * (4.0 + 12.0 * intensity)
 
-    # Keep luminance mean stable on skin to prevent perceived skin darkening.
+    # FR-4.2: Slight local contrast boost in luminance.
+    aged_y = aged_y + cv2.GaussianBlur((aged_y - y), (0, 0), sigmaX=1.0, sigmaY=1.0) * (0.08 + 0.12 * intensity)
+
+    # Allow a *controlled* net skin darkening (aged skin reads slightly duller) while capping
+    # the global mean shift so the face never turns muddy. The previous version forced this
+    # delta to exactly zero on skin, which was the main reason the effect was invisible.
     skin_sum = float(np.sum(skin_mask) + 1e-6)
-    orig_skin_mean = float(np.sum(y * skin_mask) / skin_sum)
-    aged_skin_mean = float(np.sum(aged_y * skin_mask) / skin_sum)
-    aged_y = aged_y + (orig_skin_mean - aged_skin_mean) * skin_mask
+    mean_shift = float(np.sum((aged_y - y) * skin_mask) / skin_sum)
+    target_shift = -(3.0 + 9.0 * intensity)
+    aged_y = aged_y + (target_shift - mean_shift) * skin_mask
 
-    # Keep chroma channels unchanged to preserve original skin tone.
+    # FR-4.2: Chroma aging. Pull vivid skin toward a dull, sallow (slightly yellow) reference
+    # and add brown spot pigment. We desaturate toward a WARM tone, not neutral grey, so skin
+    # turns sallow/duller instead of ashy-blue. The previous version froze chroma entirely,
+    # removing every colour cue of aging.
+    pull = (0.08 + 0.20 * intensity) * skin_mask
+    sallow_cr, sallow_cb = 140.0, 116.0
+    cr_aged = cr * (1.0 - pull) + sallow_cr * pull + spots * (3.0 + 7.0 * intensity)
+    cb_aged = cb * (1.0 - pull) + sallow_cb * pull
+
     ycrcb[:, :, 0] = np.clip(aged_y, 0, 255)
+    ycrcb[:, :, 1] = np.clip(cr_aged, 0, 255)
+    ycrcb[:, :, 2] = np.clip(cb_aged, 0, 255)
     aged = cv2.cvtColor(ycrcb.astype(np.uint8), cv2.COLOR_YCrCb2BGR)
 
     # Add facial sagging (jaw/cheek/smile-line) while keeping eye droop disabled.
